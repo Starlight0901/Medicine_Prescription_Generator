@@ -1,5 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { LOGO_PATH, RX_ICON_PATH } from '../../data/branding';
 import { calculateAge, formatDate } from '../../utils/dateUtils';
+import { processRxIcon } from '../../utils/rxIconProcessor';
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
@@ -16,7 +18,15 @@ const COLORS = {
 function loadImageElement(url) {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.crossOrigin = 'anonymous';
+    const isExternal =
+      url.startsWith('http') &&
+      typeof window !== 'undefined' &&
+      !url.startsWith(window.location.origin);
+
+    if (isExternal) {
+      image.crossOrigin = 'anonymous';
+    }
+
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
     image.src = url;
@@ -119,10 +129,10 @@ function drawLines(page, lines, x, y, font, fontSize, color, lineHeight) {
   return y - lines.length * lineHeight;
 }
 
-function drawDivider(page, y, color = COLORS.border) {
+function drawDivider(page, y, left, right, color = COLORS.border) {
   page.drawLine({
-    start: { x: MARGIN, y },
-    end: { x: PAGE_WIDTH - MARGIN, y },
+    start: { x: left, y },
+    end: { x: right, y },
     thickness: 1,
     color,
   });
@@ -132,14 +142,101 @@ function isNonEmpty(value) {
   return String(value ?? '').trim().length > 0;
 }
 
-function formatDoctorHeaderName(doctorName) {
-  const name = String(doctorName ?? '').trim() || 'Doctor';
+const GRADIENT_BORDER = {
+  olive: rgb(0.45, 0.5, 0.28),
+  lightBlue: rgb(0.62, 0.76, 0.84),
+  darkBlue: rgb(0.11, 0.22, 0.38),
+};
 
-  if (/^dr\.?\s/i.test(name)) {
-    return name;
+function mixColor(colorA, colorB, amount) {
+  return rgb(
+    colorA.red + (colorB.red - colorA.red) * amount,
+    colorA.green + (colorB.green - colorA.green) * amount,
+    colorA.blue + (colorB.blue - colorA.blue) * amount
+  );
+}
+
+function drawGradientEdge(page, start, end, startColor, endColor, thickness, segments = 24) {
+  for (let index = 0; index < segments; index += 1) {
+    const t0 = index / segments;
+    const t1 = (index + 1) / segments;
+    const color = mixColor(startColor, endColor, (t0 + t1) / 2);
+
+    page.drawLine({
+      start: {
+        x: start.x + (end.x - start.x) * t0,
+        y: start.y + (end.y - start.y) * t0,
+      },
+      end: {
+        x: start.x + (end.x - start.x) * t1,
+        y: start.y + (end.y - start.y) * t1,
+      },
+      thickness,
+      color,
+    });
+  }
+}
+
+function drawGradientPrescriptionBorder(page, rect, thickness = 2) {
+  const { x, y, width, height } = rect;
+  const topLeft = { x, y: y + height };
+  const topRight = { x: x + width, y: y + height };
+  const bottomRight = { x: x + width, y };
+  const bottomLeft = { x, y };
+
+  drawGradientEdge(page, topLeft, topRight, GRADIENT_BORDER.olive, GRADIENT_BORDER.lightBlue, thickness);
+  drawGradientEdge(page, topRight, bottomRight, GRADIENT_BORDER.lightBlue, GRADIENT_BORDER.darkBlue, thickness);
+  drawGradientEdge(page, bottomRight, bottomLeft, GRADIENT_BORDER.darkBlue, GRADIENT_BORDER.olive, thickness);
+  drawGradientEdge(page, bottomLeft, topLeft, GRADIENT_BORDER.olive, GRADIENT_BORDER.darkBlue, thickness);
+}
+
+async function loadAssetBytes(url) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load asset: ${url}`);
   }
 
-  return `Dr. ${name}`;
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+function drawPdfBrandingHeader(page, fonts, images, layout, prescription) {
+  const { regularFont } = fonts;
+  const { logoImage, rxImage } = images;
+  const { contentLeft, contentRight, headerTop } = layout;
+
+  const logoHeight = 96;
+  const rxHeight = 32;
+  const logoDims = logoImage.scale(logoHeight / logoImage.height);
+  const rxDims = rxImage.scale(rxHeight / rxImage.height);
+
+  page.drawImage(logoImage, {
+    x: contentLeft,
+    y: headerTop - logoDims.height,
+    width: logoDims.width,
+    height: logoDims.height,
+  });
+
+  page.drawImage(rxImage, {
+    x: contentRight - rxDims.width,
+    y: headerTop - rxDims.height,
+    width: rxDims.width,
+    height: rxDims.height,
+  });
+
+  const dateText = `Date: ${formatDate(prescription.createdAt)}`;
+  const dateWidth = regularFont.widthOfTextAtSize(dateText, 9);
+
+  page.drawText(dateText, {
+    x: contentRight - dateWidth,
+    y: headerTop - rxDims.height - 14,
+    size: 9,
+    font: regularFont,
+    color: COLORS.muted,
+  });
+
+  const contentStartY = headerTop - Math.max(logoDims.height, rxDims.height) - 22;
+  return contentStartY;
 }
 
 function renderIfNotEmpty(doc, label, value, x, y) {
@@ -195,9 +292,9 @@ function renderIfNotEmpty(doc, label, value, x, y) {
   return nextY;
 }
 
-function drawTable(page, startY, medicines, regularFont, boldFont) {
-  const tableX = MARGIN;
-  const tableWidth = PAGE_WIDTH - MARGIN * 2;
+function drawTable(page, startY, medicines, regularFont, boldFont, contentLeft, contentWidth) {
+  const tableX = contentLeft;
+  const tableWidth = contentWidth;
   const columns = [
     { key: 'index', label: '#', width: 28 },
     { key: 'name', label: 'Medicine', width: 150 },
@@ -275,47 +372,50 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
   const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  const [signatureBytes, sealBytes] = await Promise.all([
+  const [{ pngBytes: rxBytes }, logoBytes, signatureBytes, sealBytes] = await Promise.all([
+    processRxIcon(RX_ICON_PATH),
+    loadAssetBytes(LOGO_PATH),
     resolveImageBytes(settings.signatureImageUrl, 'Signature'),
     resolveImageBytes(settings.sealImageUrl, 'Seal'),
   ]);
 
-  const signatureImage = await pdfDoc.embedPng(signatureBytes);
-  const sealImage = await pdfDoc.embedPng(sealBytes);
+  const [logoImage, rxImage, signatureImage, sealImage] = await Promise.all([
+    pdfDoc.embedPng(logoBytes),
+    pdfDoc.embedPng(rxBytes),
+    pdfDoc.embedPng(signatureBytes),
+    pdfDoc.embedPng(sealBytes),
+  ]);
 
-  let y = PAGE_HEIGHT - MARGIN;
+  const borderInset = 28;
+  const borderThickness = 2;
+  const contentPad = 28;
+  const frameWidth = PAGE_WIDTH - borderInset * 2;
+  const frameHeight = PAGE_HEIGHT - borderInset * 2;
+  const contentLeft = borderInset + borderThickness + contentPad;
+  const contentRight = PAGE_WIDTH - contentLeft;
+  const contentWidth = contentRight - contentLeft;
+  const frameTop = PAGE_HEIGHT - borderInset;
+  const headerTop = frameTop - contentPad;
 
-  page.drawText(formatDoctorHeaderName(settings.doctorName), {
-    x: MARGIN,
-    y,
-    size: 20,
-    font: boldFont,
-    color: COLORS.primary,
-  });
+  drawGradientPrescriptionBorder(
+    page,
+    { x: borderInset, y: borderInset, width: frameWidth, height: frameHeight },
+    borderThickness
+  );
 
-  page.drawText(`Date: ${formatDate(prescription.createdAt)}`, {
-    x: PAGE_WIDTH - MARGIN - 150,
-    y,
-    size: 11,
-    font: regularFont,
-    color: COLORS.muted,
-  });
+  let y = drawPdfBrandingHeader(
+    page,
+    { regularFont, boldFont },
+    { logoImage, rxImage },
+    { contentLeft, contentRight, headerTop },
+    prescription
+  );
 
-  y -= 16;
-  drawDivider(page, y);
-  y -= 28;
-
-  page.drawText('PRESCRIPTION', {
-    x: MARGIN,
-    y,
-    size: 16,
-    font: boldFont,
-    color: COLORS.primary,
-  });
-  y -= 28;
+  drawDivider(page, y, contentLeft, contentRight);
+  y -= 20;
 
   page.drawText('Patient Information', {
-    x: MARGIN,
+    x: contentLeft,
     y,
     size: 12,
     font: boldFont,
@@ -332,7 +432,7 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
 
   patientLines.forEach((line) => {
     page.drawText(line, {
-      x: MARGIN,
+      x: contentLeft,
       y,
       size: 11,
       font: regularFont,
@@ -345,42 +445,44 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
     page,
     boldFont,
     regularFont,
-    maxWidth: PAGE_WIDTH - MARGIN * 2,
+    maxWidth: contentWidth,
   };
 
   y -= 8;
-  y = renderIfNotEmpty(sectionDoc, 'Diagnosis', prescription.diagnosis, MARGIN, y);
+  y = renderIfNotEmpty(sectionDoc, 'Diagnosis', prescription.diagnosis, contentLeft, y);
   y -= 10;
 
   const medicines = (prescription.medicines ?? []).filter((medicine) => isNonEmpty(medicine.name));
 
   if (medicines.length > 0) {
     page.drawText('Medicines', {
-      x: MARGIN,
+      x: contentLeft,
       y,
       size: 12,
       font: boldFont,
       color: COLORS.text,
     });
     y -= 16;
-    y = drawTable(page, y, medicines, regularFont, boldFont);
+    y = drawTable(page, y, medicines, regularFont, boldFont, contentLeft, contentWidth);
   }
 
-  y = renderIfNotEmpty(sectionDoc, 'Prescription Notes', prescription.notes, MARGIN, y);
+  y = renderIfNotEmpty(sectionDoc, 'Prescription Notes', prescription.notes, contentLeft, y);
 
-  const footerY = 120;
-  drawDivider(page, footerY + 36);
+  const footerY = borderInset + contentPad + 72;
+  drawDivider(page, footerY + 36, contentLeft, contentRight);
 
-  page.drawText(settings.doctorName || 'Doctor', {
-    x: MARGIN,
-    y: footerY + 18,
-    size: 11,
-    font: boldFont,
-    color: COLORS.text,
-  });
+  if (isNonEmpty(settings.doctorName)) {
+    page.drawText(settings.doctorName, {
+      x: contentLeft,
+      y: footerY + 18,
+      size: 9,
+      font: regularFont,
+      color: COLORS.muted,
+    });
+  }
 
   page.drawText('Authorized Signature', {
-    x: MARGIN,
+    x: contentLeft,
     y: footerY + 2,
     size: 9,
     font: regularFont,
@@ -389,23 +491,23 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
 
   const signatureDims = signatureImage.scale(0.35);
   page.drawImage(signatureImage, {
-    x: MARGIN,
-    y: 36,
+    x: contentLeft,
+    y: borderInset + contentPad,
     width: signatureDims.width,
     height: signatureDims.height,
   });
 
   const sealDims = sealImage.scale(0.3);
   page.drawImage(sealImage, {
-    x: PAGE_WIDTH - MARGIN - sealDims.width,
-    y: 36,
+    x: contentRight - sealDims.width,
+    y: borderInset + contentPad,
     width: sealDims.width,
     height: sealDims.height,
   });
 
   page.drawText('Seal', {
-    x: PAGE_WIDTH - MARGIN - sealDims.width,
-    y: 28,
+    x: contentRight - sealDims.width,
+    y: borderInset + contentPad - 8,
     size: 9,
     font: regularFont,
     color: COLORS.muted,

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
-import { NAV_ICONS } from '../components/NavIcons';
+import RxIcon from '../components/RxIcon';
+import { LOGO_PATH } from '../data/branding';
 import { useAuth } from '../context/AuthContext';
 import { ROUTES } from '../data/constants';
 
@@ -37,11 +38,12 @@ function Login() {
     <section className="login-page">
       <Card className="login-card glass-card--strong">
         <div className="login-brand">
-          <div className="login-brand-icon" aria-hidden="true">
-            {NAV_ICONS.brand}
+          <div className="login-brand-bar">
+            <img src={LOGO_PATH} alt="" className="login-brand-logo" />
+            <RxIcon size="lg" />
           </div>
           <h1>Sign in</h1>
-          <p>Doctor Prescription Management System</p>
+          <p>Prescription management</p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>

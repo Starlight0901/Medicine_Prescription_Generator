@@ -21,10 +21,7 @@ function Navbar() {
     <>
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-brand">
-          <div className="sidebar-brand-icon" aria-hidden="true">
-            {NAV_ICONS.brand}
-          </div>
-          <span className="sidebar-brand-text">Doctor<br />Prescriptions</span>
+          <span className="sidebar-brand-title">Navigation</span>
         </div>
 
         <ul className="sidebar-nav">

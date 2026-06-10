@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import AppHeader from './AppHeader';
 import Navbar from './Navbar';
 
 function Layout() {
@@ -6,6 +7,7 @@ function Layout() {
     <div className="app-layout">
       <Navbar />
       <div className="app-content">
+        <AppHeader />
         <main className="app-main">
           <Outlet />
         </main>

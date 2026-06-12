@@ -1,49 +1,18 @@
-import { STORAGE_KEYS } from '../data/constants';
-import { getSeedData } from '../data/seedData';
-import { generateId } from '../utils/idGenerator';
-import { deriveDateOfBirthFromAge, toISODateString } from '../utils/dateUtils';
-import { getItem, setItem } from './storageService';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  updateDoc,
+} from 'firebase/firestore';
+import { toISODateString } from '../utils/dateUtils';
+import { db } from './firebase';
 
-function ensureSeeded() {
-  const seeded = getItem(STORAGE_KEYS.SEEDED, false);
-  if (seeded) return;
-
-  const seedData = getSeedData();
-  Object.entries(seedData).forEach(([key, value]) => setItem(key, value));
-  setItem(STORAGE_KEYS.SEEDED, true);
-}
-
-function normalizeStoredPatient(patient) {
-  const { age, ...rest } = patient;
-  let dateOfBirth = rest.dateOfBirth;
-
-  if (!dateOfBirth && age != null) {
-    dateOfBirth = deriveDateOfBirthFromAge(age);
-  }
-
-  return {
-    ...rest,
-    dateOfBirth,
-    phone: String(rest.phone ?? '').trim(),
-  };
-}
-
-function readPatients() {
-  ensureSeeded();
-  const patients = getItem(STORAGE_KEYS.PATIENTS, []);
-  const normalized = patients.map(normalizeStoredPatient);
-  const needsMigration = patients.some((patient) => 'age' in patient || !patient.dateOfBirth);
-
-  if (needsMigration) {
-    writePatients(normalized);
-  }
-
-  return normalized;
-}
-
-function writePatients(patients) {
-  setItem(STORAGE_KEYS.PATIENTS, patients);
-}
+const patientsCollection = collection(db, 'patients');
 
 function normalizePatientInput({ name, dateOfBirth, gender, phone }) {
   return {
@@ -73,17 +42,45 @@ function validatePatientInput(patient) {
   return errors;
 }
 
-export function getAllPatients() {
-  return readPatients().sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  );
+function mapFirestoreError(error) {
+  return error?.message || 'Failed to access patients. Please try again.';
 }
 
-export function getPatientById(id) {
-  return readPatients().find((patient) => patient.id === id) ?? null;
+function mapPatientDoc(snapshot) {
+  const data = snapshot.data();
+
+  return {
+    id: snapshot.id,
+    name: data.name ?? '',
+    dateOfBirth: data.dateOfBirth ?? '',
+    gender: data.gender ?? '',
+    phone: String(data.phone ?? '').trim(),
+    createdAt: data.createdAt ?? '',
+  };
 }
 
-export function createPatient(patientInput) {
+function buildPatientPayload(patient) {
+  return {
+    name: patient.name,
+    dateOfBirth: patient.dateOfBirth,
+    gender: patient.gender,
+    phone: patient.phone,
+    createdAt: patient.createdAt,
+  };
+}
+
+export async function getAllPatients() {
+  try {
+    const patientsQuery = query(patientsCollection, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(patientsQuery);
+    return snapshot.docs.map(mapPatientDoc);
+  } catch (error) {
+    console.error('Failed to load patients from Firestore:', error);
+    return [];
+  }
+}
+
+export async function createPatient(patientInput) {
   const patient = normalizePatientInput(patientInput);
   const errors = validatePatientInput(patient);
 
@@ -91,27 +88,23 @@ export function createPatient(patientInput) {
     return { success: false, errors };
   }
 
-  const newPatient = {
-    id: generateId('patient'),
-    ...patient,
-    createdAt: toISODateString(),
-  };
+  const createdAt = toISODateString();
+  const payload = buildPatientPayload({ ...patient, createdAt });
 
-  const patients = readPatients();
-  patients.push(newPatient);
-  writePatients(patients);
-
-  return { success: true, data: newPatient };
+  try {
+    const docRef = await addDoc(patientsCollection, payload);
+    const newPatient = { id: docRef.id, ...payload };
+    return { success: true, data: newPatient };
+  } catch (error) {
+    console.error('Failed to create patient in Firestore:', error);
+    return {
+      success: false,
+      errors: { form: mapFirestoreError(error) },
+    };
+  }
 }
 
-export function updatePatient(id, patientInput) {
-  const patients = readPatients();
-  const index = patients.findIndex((patient) => patient.id === id);
-
-  if (index === -1) {
-    return { success: false, errors: { form: 'Patient not found.' } };
-  }
-
+export async function updatePatient(id, patientInput) {
   const patient = normalizePatientInput(patientInput);
   const errors = validatePatientInput(patient);
 
@@ -119,37 +112,47 @@ export function updatePatient(id, patientInput) {
     return { success: false, errors };
   }
 
-  const updatedPatient = {
-    ...patients[index],
-    ...patient,
-    id,
-  };
+  const patientRef = doc(db, 'patients', id);
 
-  patients[index] = updatedPatient;
-  writePatients(patients);
+  try {
+    const snapshot = await getDoc(patientRef);
 
-  return { success: true, data: updatedPatient };
-}
+    if (!snapshot.exists()) {
+      return { success: false, errors: { form: 'Patient not found.' } };
+    }
 
-export function deletePatient(id) {
-  const patients = readPatients();
-  const filtered = patients.filter((patient) => patient.id !== id);
+    const existing = mapPatientDoc(snapshot);
+    const payload = buildPatientPayload({
+      ...patient,
+      createdAt: existing.createdAt,
+    });
 
-  if (filtered.length === patients.length) {
-    return { success: false, error: 'Patient not found.' };
+    await updateDoc(patientRef, payload);
+
+    return { success: true, data: { id, ...payload } };
+  } catch (error) {
+    console.error('Failed to update patient in Firestore:', error);
+    return {
+      success: false,
+      errors: { form: mapFirestoreError(error) },
+    };
   }
-
-  writePatients(filtered);
-  return { success: true };
 }
 
-export function searchPatients(query) {
-  const normalizedQuery = query.trim().toLowerCase();
-  const patients = getAllPatients();
+export async function deletePatient(id) {
+  const patientRef = doc(db, 'patients', id);
 
-  if (!normalizedQuery) return patients;
+  try {
+    const snapshot = await getDoc(patientRef);
 
-  return patients.filter((patient) =>
-    patient.name.toLowerCase().includes(normalizedQuery)
-  );
+    if (!snapshot.exists()) {
+      return { success: false, error: 'Patient not found.' };
+    }
+
+    await deleteDoc(patientRef);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete patient from Firestore:', error);
+    return { success: false, error: mapFirestoreError(error) };
+  }
 }

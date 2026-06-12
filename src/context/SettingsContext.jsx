@@ -1,16 +1,36 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { getSettings, updateSettings as persistSettings } from '../services/apiService';
+import { normalizeSettings } from '../services/settingsService';
+
+const EMPTY_SETTINGS = normalizeSettings();
 
 const SettingsContext = createContext(null);
 
 export function SettingsProvider({ children }) {
-  const [settings, setSettings] = useState(() => getSettings());
+  const [settings, setSettings] = useState(EMPTY_SETTINGS);
+  const [isSettingsReady, setIsSettingsReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getSettings().then((loadedSettings) => {
+      if (!cancelled) {
+        setSettings(loadedSettings);
+        setIsSettingsReady(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const value = useMemo(
     () => ({
       settings,
-      updateSettings: (settingsInput) => {
-        const result = persistSettings(settingsInput);
+      isSettingsReady,
+      updateSettings: async (settingsInput) => {
+        const result = await persistSettings(settingsInput);
 
         if (result.success) {
           setSettings(result.data);
@@ -18,13 +38,13 @@ export function SettingsProvider({ children }) {
 
         return result;
       },
-      refreshSettings: () => {
-        const latestSettings = getSettings();
+      refreshSettings: async () => {
+        const latestSettings = await getSettings();
         setSettings(latestSettings);
         return latestSettings;
       },
     }),
-    [settings]
+    [settings, isSettingsReady]
   );
 
   return (

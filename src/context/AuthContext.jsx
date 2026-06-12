@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   getCurrentUser,
   login as loginUser,
@@ -8,14 +8,31 @@ import {
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => getCurrentUser());
+  const [user, setUser] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getCurrentUser().then((currentUser) => {
+      if (!cancelled) {
+        setUser(currentUser);
+        setIsAuthReady(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const value = useMemo(
     () => ({
       user,
       isAuthenticated: Boolean(user),
-      login: (email, password) => {
-        const result = loginUser(email, password);
+      isAuthReady,
+      login: async (email, password) => {
+        const result = await loginUser(email, password);
 
         if (result.success) {
           setUser(result.user);
@@ -23,17 +40,17 @@ export function AuthProvider({ children }) {
 
         return result;
       },
-      logout: () => {
-        logoutUser();
+      logout: async () => {
+        await logoutUser();
         setUser(null);
       },
-      refreshUser: () => {
-        const currentUser = getCurrentUser();
+      refreshUser: async () => {
+        const currentUser = await getCurrentUser();
         setUser(currentUser);
         return currentUser;
       },
     }),
-    [user]
+    [user, isAuthReady]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PrescriptionDetail from '../components/PrescriptionDetail';
 import PrescriptionForm from '../components/PrescriptionForm';
 import Card from '../components/ui/Card';
@@ -37,6 +37,8 @@ const MONTH_LABELS = [
 function History() {
   const { settings } = useSettings();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [patients, setPatients] = useState([]);
+  const [allPrescriptions, setAllPrescriptions] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState(EMPTY_DATE_FILTER);
   const [selectedPrescriptionId, setSelectedPrescriptionId] = useState(null);
@@ -45,14 +47,19 @@ function History() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  const patients = useMemo(() => {
-    void refreshKey;
-    return getPatients();
-  }, [refreshKey]);
+  useEffect(() => {
+    let cancelled = false;
 
-  const allPrescriptions = useMemo(() => {
-    void refreshKey;
-    return getPrescriptions();
+    Promise.all([getPatients(), getPrescriptions()]).then(([loadedPatients, loadedPrescriptions]) => {
+      if (!cancelled) {
+        setPatients(loadedPatients);
+        setAllPrescriptions(loadedPrescriptions);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [refreshKey]);
 
   const dateOptions = useMemo(
@@ -141,7 +148,7 @@ function History() {
     setIsSavingEdit(true);
 
     try {
-      const result = savePrescription({
+      const result = await savePrescription({
         id: editingPrescription.id,
         ...payload.data,
         createdAt: editingPrescription.createdAt,
@@ -161,13 +168,13 @@ function History() {
     }
   }
 
-  function handleDelete(prescription) {
+  async function handleDelete(prescription) {
     const confirmed = window.confirm(
       `Delete prescription for "${prescription.patientName}"?`
     );
     if (!confirmed) return;
 
-    const result = deletePrescription(prescription.id);
+    const result = await deletePrescription(prescription.id);
 
     if (!result.success) {
       setStatusMessage(result.error);

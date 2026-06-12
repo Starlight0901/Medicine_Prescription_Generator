@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PatientSelectionModal from '../components/PatientSelectionModal';
 import PrescriptionForm from '../components/PrescriptionForm';
@@ -15,13 +15,23 @@ function NewPrescription() {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [patients, setPatients] = useState([]);
   const [patientId, setPatientId] = useState('');
   const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const patients = useMemo(() => {
-    void refreshKey;
-    return getPatients();
+  useEffect(() => {
+    let cancelled = false;
+
+    getPatients().then((loadedPatients) => {
+      if (!cancelled) {
+        setPatients(loadedPatients);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [refreshKey]);
 
   const selectedPatient = patients.find((patient) => patient.id === patientId) ?? null;
@@ -49,7 +59,7 @@ function NewPrescription() {
     setIsSubmitting(true);
 
     try {
-      const result = savePrescription({
+      const result = await savePrescription({
         id: generateId('rx'),
         ...payload.data,
         createdAt: toISODateString(),

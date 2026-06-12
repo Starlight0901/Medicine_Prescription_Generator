@@ -39,9 +39,9 @@ function PatientForm({
     }
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    const result = onSubmit(formData);
+    const result = await onSubmit(formData);
 
     if (result?.errors) {
       setErrors(result.errors);

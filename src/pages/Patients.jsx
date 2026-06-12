@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PatientForm from '../components/PatientForm';
 import Card, { CardBody } from '../components/ui/Card';
 import {
@@ -18,16 +18,31 @@ function filterPatientsByName(patients, query) {
 }
 
 function Patients() {
+  const [allPatients, setAllPatients] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [query, setQuery] = useState('');
   const [formMode, setFormMode] = useState(null);
   const [editingPatient, setEditingPatient] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
 
-  const patients = useMemo(() => {
-    void refreshKey;
-    return filterPatientsByName(getPatients(), query);
-  }, [query, refreshKey]);
+  useEffect(() => {
+    let cancelled = false;
+
+    getPatients().then((loadedPatients) => {
+      if (!cancelled) {
+        setAllPatients(loadedPatients);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  const patients = useMemo(
+    () => filterPatientsByName(allPatients, query),
+    [allPatients, query]
+  );
 
   function refreshList() {
     setRefreshKey((current) => current + 1);
@@ -50,8 +65,8 @@ function Patients() {
     setEditingPatient(null);
   }
 
-  function handleCreate(formData) {
-    const result = savePatient(formData);
+  async function handleCreate(formData) {
+    const result = await savePatient(formData);
 
     if (!result.success) {
       return result;
@@ -63,8 +78,8 @@ function Patients() {
     return result;
   }
 
-  function handleUpdate(formData) {
-    const result = savePatient({ ...formData, id: editingPatient.id });
+  async function handleUpdate(formData) {
+    const result = await savePatient({ ...formData, id: editingPatient.id });
 
     if (!result.success) {
       return result;
@@ -76,11 +91,11 @@ function Patients() {
     return result;
   }
 
-  function handleDelete(patient) {
+  async function handleDelete(patient) {
     const confirmed = window.confirm(`Delete patient "${patient.name}"?`);
     if (!confirmed) return;
 
-    const result = deletePatient(patient.id);
+    const result = await deletePatient(patient.id);
 
     if (!result.success) {
       setStatusMessage(result.error);

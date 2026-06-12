@@ -1,30 +1,47 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import RxIcon from '../components/RxIcon';
 import { LOGO_PATH } from '../data/branding';
 import { useAuth } from '../context/AuthContext';
 import { ROUTES } from '../data/constants';
+import { getDemoCredentials } from '../services/authService';
 
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated } = useAuth();
-  const [email, setEmail] = useState('doctor@gmail.com');
+  const { login, isAuthenticated, isAuthReady } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [demoHint, setDemoHint] = useState('');
   const [error, setError] = useState('');
 
   const redirectPath = location.state?.from?.pathname ?? ROUTES.DASHBOARD;
 
-  if (isAuthenticated) {
+  useEffect(() => {
+    let cancelled = false;
+
+    getDemoCredentials().then(({ email: demoEmail, passwordHint }) => {
+      if (!cancelled) {
+        setEmail(demoEmail);
+        setDemoHint(`Demo account: ${demoEmail} / ${passwordHint}`);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (isAuthReady && isAuthenticated) {
     return <Navigate to={redirectPath} replace />;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     setError('');
 
-    const result = login(email, password);
+    const result = await login(email, password);
 
     if (!result.success) {
       setError(result.error);
@@ -80,9 +97,7 @@ function Login() {
           </button>
         </form>
 
-        <p className="login-hint">
-          Demo account: doctor@gmail.com / password123
-        </p>
+        {demoHint && <p className="login-hint">{demoHint}</p>}
       </Card>
     </section>
   );

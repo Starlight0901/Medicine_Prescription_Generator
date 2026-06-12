@@ -10,19 +10,19 @@ import {
   getAllPrescriptions,
   getPrescriptionById,
   updatePrescription,
-} from './prescriptionService';
+} from './prescriptionsService';
 import { getSettings as readSettings, saveSettings } from './settingsService';
 
 /**
- * Unified data access layer.
- * UI must use these methods only — swap implementation for Firebase later.
+ * Unified async data access facade for UI components.
+ * Swap underlying service implementations for Firebase without changing consumers.
  */
 
-export function getPatients() {
+export async function getPatients() {
   return getAllPatients();
 }
 
-export function savePatient(patient) {
+export async function savePatient(patient) {
   if (patient?.id) {
     return updatePatient(patient.id, patient);
   }
@@ -30,17 +30,17 @@ export function savePatient(patient) {
   return createPatient(patient);
 }
 
-export function deletePatient(id) {
+export async function deletePatient(id) {
   return deletePatientRecord(id);
 }
 
-export function getPrescriptions() {
+export async function getPrescriptions() {
   return getAllPrescriptions();
 }
 
-export function savePrescription(prescription) {
-  if (prescription?.id && getPrescriptionById(prescription.id)) {
-    const updated = updatePrescription(prescription.id, prescription);
+export async function savePrescription(prescription) {
+  if (prescription?.id && (await getPrescriptionById(prescription.id))) {
+    const updated = await updatePrescription(prescription.id, prescription);
 
     if (!updated) {
       return { success: false, error: 'Prescription not found.' };
@@ -49,18 +49,18 @@ export function savePrescription(prescription) {
     return { success: true, data: updated };
   }
 
-  const created = createPrescription(prescription);
+  const created = await createPrescription(prescription);
   return { success: true, data: created };
 }
 
-export function deletePrescription(id) {
+export async function deletePrescription(id) {
   return deletePrescriptionRecord(id);
 }
 
-export function getSettings() {
+export async function getSettings() {
   return readSettings();
 }
 
-export function updateSettings(settingsInput) {
+export async function updateSettings(settingsInput) {
   return saveSettings(settingsInput);
 }

@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
 import Card from '../components/ui/Card';
 import { useSettings } from '../context/SettingsContext';
+import { normalizeSettings } from '../services/settingsService';
 
-const EMPTY_FORM = {
-  doctorName: '',
-  signatureImageUrl: '',
-  sealImageUrl: '',
-};
+const EMPTY_FORM = normalizeSettings();
 
 function Settings() {
   const { settings, updateSettings } = useSettings();
@@ -31,10 +28,10 @@ function Settings() {
     }
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
-    const result = updateSettings(formData);
+    const result = await updateSettings(formData);
 
     if (!result.success) {
       setErrors(result.errors ?? {});
@@ -43,7 +40,7 @@ function Settings() {
     }
 
     setErrors({});
-    setMessage('Settings saved to local storage.');
+    setMessage('Settings saved successfully.');
   }
 
   return (

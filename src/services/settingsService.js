@@ -1,11 +1,8 @@
-import { STORAGE_KEYS } from '../data/constants';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { defaultSettings } from '../data/seedData';
-import { getItem, setItem } from './storageService';
-import { getAllPatients } from './patientsService';
+import { db } from './firebase';
 
-function ensureSeeded() {
-  getAllPatients();
-}
+const settingsDocRef = doc(db, 'settings', 'system');
 
 export function normalizeSettings(raw = {}) {
   return {
@@ -25,13 +22,26 @@ function validateSettings(settings) {
   return errors;
 }
 
-export function getSettings() {
-  ensureSeeded();
-  const stored = getItem(STORAGE_KEYS.SETTINGS, defaultSettings);
-  return normalizeSettings(stored);
+function mapFirestoreError(error) {
+  return error?.message || 'Failed to access settings. Please try again.';
 }
 
-export function saveSettings(settingsInput) {
+export async function getSettings() {
+  try {
+    const snapshot = await getDoc(settingsDocRef);
+
+    if (!snapshot.exists()) {
+      return normalizeSettings(defaultSettings);
+    }
+
+    return normalizeSettings(snapshot.data());
+  } catch (error) {
+    console.error('Failed to load settings from Firestore:', error);
+    return normalizeSettings(defaultSettings);
+  }
+}
+
+export async function saveSettings(settingsInput) {
   const settings = normalizeSettings(settingsInput);
   const errors = validateSettings(settings);
 
@@ -39,15 +49,20 @@ export function saveSettings(settingsInput) {
     return { success: false, errors, data: settings };
   }
 
-  setItem(STORAGE_KEYS.SETTINGS, settings);
-  return { success: true, data: settings };
+  try {
+    await setDoc(settingsDocRef, settings, { merge: true });
+    return { success: true, data: settings };
+  } catch (error) {
+    console.error('Failed to save settings to Firestore:', error);
+    return {
+      success: false,
+      errors: { form: mapFirestoreError(error) },
+      data: settings,
+    };
+  }
 }
 
-export function updateSettings(updates) {
-  return saveSettings({ ...getSettings(), ...updates });
-}
-
-export function resetSettings() {
-  setItem(STORAGE_KEYS.SETTINGS, defaultSettings);
-  return { success: true, data: normalizeSettings(defaultSettings) };
+export async function updateSettings(updates) {
+  const current = await getSettings();
+  return saveSettings({ ...current, ...updates });
 }

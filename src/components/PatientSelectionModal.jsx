@@ -37,8 +37,8 @@ function PatientSelectionModal({
   const highlightedPatient =
     patients.find((patient) => patient.id === highlightedPatientId) ?? null;
 
-  function refreshPatientList() {
-    const refreshedPatients = getPatients();
+  async function refreshPatientList() {
+    const refreshedPatients = await getPatients();
     setPatients(refreshedPatients);
     onPatientsChange?.();
     return refreshedPatients;
@@ -49,14 +49,14 @@ function PatientSelectionModal({
     onClose();
   }
 
-  function handleAddPatient(formData) {
-    const result = savePatient(formData);
+  async function handleAddPatient(formData) {
+    const result = await savePatient(formData);
 
     if (!result.success) {
       return result;
     }
 
-    refreshPatientList();
+    await refreshPatientList();
     setStatusMessage('');
 
     if (autoSelectOnCreate) {
@@ -71,14 +71,14 @@ function PatientSelectionModal({
     return result;
   }
 
-  function handleEditPatient(formData) {
-    const result = savePatient({ ...formData, id: highlightedPatient.id });
+  async function handleEditPatient(formData) {
+    const result = await savePatient({ ...formData, id: highlightedPatient.id });
 
     if (!result.success) {
       return result;
     }
 
-    refreshPatientList();
+    await refreshPatientList();
     setHighlightedPatientId(result.data.id);
     setView('list');
     setStatusMessage(`Patient "${result.data.name}" updated.`);

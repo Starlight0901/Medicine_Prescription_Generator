@@ -1,11 +1,3 @@
-export const STORAGE_KEYS = {
-  PATIENTS: 'dpm_patients',
-  PRESCRIPTIONS: 'dpm_prescriptions',
-  SETTINGS: 'dpm_settings',
-  SEEDED: 'dpm_seeded',
-  AUTH_SESSION: 'dpm_auth_session',
-};
-
 export const ROUTES = {
   LOGIN: '/login',
   DASHBOARD: '/',

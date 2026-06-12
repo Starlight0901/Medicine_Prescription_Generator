@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import { NAV_ICONS } from '../components/NavIcons';
@@ -6,8 +7,24 @@ import { getPatients, getPrescriptions } from '../services/apiService';
 import { formatDateTime } from '../utils/dateUtils';
 
 function Dashboard() {
-  const patients = getPatients();
-  const prescriptions = getPrescriptions();
+  const [patients, setPatients] = useState([]);
+  const [prescriptions, setPrescriptions] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([getPatients(), getPrescriptions()]).then(([loadedPatients, loadedPrescriptions]) => {
+      if (!cancelled) {
+        setPatients(loadedPatients);
+        setPrescriptions(loadedPrescriptions);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const recentPrescriptions = prescriptions.slice(0, 5);
 
   return (

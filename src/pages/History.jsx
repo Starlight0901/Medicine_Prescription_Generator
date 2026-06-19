@@ -11,9 +11,10 @@ import {
 } from '../services/apiService';
 import { downloadPrescriptionPDF } from '../services/pdf';
 import { formatDate } from '../utils/dateUtils';
-import { buildPrescriptionPayload } from '../utils/prescriptionFormUtils';
+import { buildPrescriptionPayload, getDocumentTypeBadge, getDocumentTypeLabel } from '../utils/prescriptionFormUtils';
 import {
   applyPrescriptionFilters,
+  DOCUMENT_TYPE_FILTER_OPTIONS,
   EMPTY_DATE_FILTER,
   extractDateFilterOptions,
   getPrescriptionPreview,
@@ -40,6 +41,7 @@ function History() {
   const [patients, setPatients] = useState([]);
   const [allPrescriptions, setAllPrescriptions] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [documentTypeFilter, setDocumentTypeFilter] = useState('');
   const [dateFilter, setDateFilter] = useState(EMPTY_DATE_FILTER);
   const [selectedPrescriptionId, setSelectedPrescriptionId] = useState(null);
   const [editingPrescription, setEditingPrescription] = useState(null);
@@ -72,8 +74,9 @@ function History() {
       applyPrescriptionFilters(allPrescriptions, {
         searchQuery,
         dateFilter,
+        documentTypeFilter,
       }),
-    [allPrescriptions, searchQuery, dateFilter]
+    [allPrescriptions, searchQuery, dateFilter, documentTypeFilter]
   );
 
   const selectedPrescription =
@@ -93,6 +96,7 @@ function History() {
 
   function clearFilters() {
     setSearchQuery('');
+    setDocumentTypeFilter('');
     setDateFilter(EMPTY_DATE_FILTER);
     setSelectedPrescriptionId(null);
     setEditingPrescription(null);
@@ -161,7 +165,7 @@ function History() {
       refreshList();
       setEditingPrescription(null);
       setSelectedPrescriptionId(result.data.id);
-      setStatusMessage('Prescription updated successfully.');
+      setStatusMessage(`${getDocumentTypeLabel(result.data.type)} updated successfully.`);
       return { success: true };
     } finally {
       setIsSavingEdit(false);
@@ -170,7 +174,7 @@ function History() {
 
   async function handleDelete(prescription) {
     const confirmed = window.confirm(
-      `Delete prescription for "${prescription.patientName}"?`
+      `Delete ${getDocumentTypeLabel(prescription.type).toLowerCase()} for "${prescription.patientName}"?`
     );
     if (!confirmed) return;
 
@@ -190,7 +194,7 @@ function History() {
     }
 
     refreshList();
-    setStatusMessage('Prescription deleted successfully.');
+    setStatusMessage(`${getDocumentTypeLabel(prescription.type)} deleted successfully.`);
   }
 
   return (
@@ -220,6 +224,25 @@ function History() {
               setEditingPrescription(null);
             }}
           />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label htmlFor="filter-document-type">Document type</label>
+          <select
+            id="filter-document-type"
+            value={documentTypeFilter}
+            onChange={(event) => {
+              setDocumentTypeFilter(event.target.value);
+              setSelectedPrescriptionId(null);
+              setEditingPrescription(null);
+            }}
+          >
+            {DOCUMENT_TYPE_FILTER_OPTIONS.map((option) => (
+              <option key={option.value || 'all'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="history-date-filters">
@@ -278,17 +301,18 @@ function History() {
       </Card>
 
       <p className="history-summary">
-        Showing {prescriptions.length} of {allPrescriptions.length} prescriptions
+        Showing {prescriptions.length} of {allPrescriptions.length} documents
       </p>
 
       {prescriptions.length === 0 ? (
         <Card>
-          <div className="empty-state">No prescriptions match your filters.</div>
+          <div className="empty-state">No documents match your filters.</div>
         </Card>
       ) : (
         <ul className="history-list">
           {prescriptions.map((prescription) => {
             const isSelected = selectedPrescriptionId === prescription.id;
+            const documentTypeBadge = getDocumentTypeBadge(prescription.type);
 
             return (
               <li key={prescription.id}>
@@ -302,6 +326,11 @@ function History() {
                     <strong>{prescription.patientName}</strong>
                     <span>{formatDate(prescription.createdAt)}</span>
                   </span>
+                  <span
+                    className={`document-type-badge document-type-badge--${documentTypeBadge.toLowerCase()}`}
+                  >
+                    [{documentTypeBadge}]
+                  </span>
                   <span className="history-item-preview">
                     {getPrescriptionPreview(prescription)}
                   </span>
@@ -314,14 +343,24 @@ function History() {
 
       {editingPrescription && (
         <Card className="history-edit-panel glass-card--strong">
-          <h2>Edit prescription</h2>
+          <h2>Edit {getDocumentTypeLabel(editingPrescription.type).toLowerCase()}</h2>
           <PrescriptionForm
             key={editingPrescription.id}
             patients={patients}
             initialPatientId={editingPrescription.patientId}
+            initialDocumentType={editingPrescription.type}
+            showDocumentTypeSelector={false}
             initialDiagnosis={editingPrescription.diagnosis}
             initialMedicines={editingPrescription.medicines}
             initialNotes={editingPrescription.notes}
+            initialReferralTitle={editingPrescription.referralTitle}
+            initialReferralContent={editingPrescription.referralContent}
+            initialInvestigationNotes={editingPrescription.investigationNotes}
+            initialInvestigations={
+              editingPrescription.investigations?.length > 0
+                ? editingPrescription.investigations
+                : ['']
+            }
             onSubmit={handleUpdatePrescription}
             onCancel={handleCancelEdit}
             submitLabel="Save changes"

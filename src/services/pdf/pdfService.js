@@ -39,6 +39,289 @@ function wrapText(text, maxWidth, font, fontSize) {
   return lines;
 }
 
+function wrapTextPreservingBreaks(text, maxWidth, font, fontSize) {
+  const rawLines = String(text ?? '').split('\n');
+  const outputLines = [];
+
+  rawLines.forEach((rawLine) => {
+    if (rawLine.trim() === '') {
+      outputLines.push('');
+      return;
+    }
+
+    outputLines.push(...wrapText(rawLine, maxWidth, font, fontSize));
+  });
+
+  if (outputLines.length === 0) {
+    outputLines.push('');
+  }
+
+  return outputLines;
+}
+
+function drawPreservedTextBlock(page, text, x, y, maxWidth, font, fontSize, lineHeight) {
+  const lines = wrapTextPreservingBreaks(text, maxWidth, font, fontSize);
+  return drawLines(page, lines, x, y, font, fontSize, COLORS.text, lineHeight);
+}
+
+function drawReferralPageBorder(page, layout) {
+  drawGradientPrescriptionBorder(
+    page,
+    {
+      x: layout.borderInset,
+      y: layout.borderInset,
+      width: layout.frameWidth,
+      height: layout.frameHeight,
+    },
+    layout.borderThickness
+  );
+}
+
+function getReferralContinuationMinY(layout) {
+  return layout.borderInset + layout.contentPad;
+}
+
+function getReferralFooterMinY(layout) {
+  return layout.borderInset + layout.contentPad + 120;
+}
+
+function getReferralContinuationStartY(layout) {
+  return layout.frameTop - layout.contentPad;
+}
+
+const REFERRAL_LAYOUT = {
+  CHARS_PER_LINE: 85,
+  LINE_HEIGHT: 15,
+  FONT_SIZE: 11,
+};
+
+function drawReferralContentWithPagination({
+  pdfDoc,
+  initialPage,
+  initialY,
+  page1StartY,
+  continuationStartY,
+  text,
+  contentLeft,
+  contentWidth,
+  font,
+  fontSize = REFERRAL_LAYOUT.FONT_SIZE,
+  lineHeight = REFERRAL_LAYOUT.LINE_HEIGHT,
+  layout,
+}) {
+  const lines = wrapTextPreservingBreaks(text, contentWidth, font, fontSize);
+  let page = initialPage;
+  let y = initialY;
+  let pageIndex = 0;
+  const continuationMinY = getReferralContinuationMinY(layout);
+  const footerMinY = getReferralFooterMinY(layout);
+
+  lines.forEach((line, index) => {
+    const isLastLine = index === lines.length - 1;
+    const minY = isLastLine ? footerMinY : continuationMinY;
+
+    if (y - lineHeight < minY) {
+      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      drawReferralPageBorder(page, layout);
+      pageIndex += 1;
+      y = pageIndex === 0 ? page1StartY : continuationStartY;
+    }
+
+    if (line) {
+      page.drawText(line, {
+        x: contentLeft,
+        y,
+        size: fontSize,
+        font,
+        color: COLORS.text,
+      });
+    }
+
+    y -= lineHeight;
+  });
+
+  return { page, y, pageIndex };
+}
+
+function drawPdfLetterHeader(page, fonts, images, layout, document) {
+  const { regularFont } = fonts;
+  const { logoImage } = images;
+  const { contentLeft, contentRight, headerTop } = layout;
+
+  const logoHeight = 96;
+  const logoDims = logoImage.scale(logoHeight / logoImage.height);
+
+  page.drawImage(logoImage, {
+    x: contentLeft,
+    y: headerTop - logoDims.height,
+    width: logoDims.width,
+    height: logoDims.height,
+  });
+
+  const dateText = `Date: ${formatDate(document.createdAt)}`;
+  const dateWidth = regularFont.widthOfTextAtSize(dateText, 9);
+
+  page.drawText(dateText, {
+    x: contentRight - dateWidth,
+    y: headerTop - 14,
+    size: 9,
+    font: regularFont,
+    color: COLORS.muted,
+  });
+
+  return headerTop - logoDims.height - 22;
+}
+
+function drawPatientInformationSection(page, fonts, layout, prescription, patient) {
+  const { regularFont, boldFont } = fonts;
+  const { contentLeft, contentRight } = layout;
+  let y = layout.y;
+
+  drawDivider(page, y, contentLeft, contentRight);
+  y -= 20;
+
+  page.drawText('Patient Information', {
+    x: contentLeft,
+    y,
+    size: 12,
+    font: boldFont,
+    color: COLORS.text,
+  });
+  y -= 20;
+
+  const patientAge = calculateAge(patient?.dateOfBirth);
+  const patientLines = [
+    `Name: ${prescription.patientName}`,
+    patientAge != null ? `Age: ${patientAge}` : null,
+    patient?.gender ? `Gender: ${patient.gender}` : null,
+  ].filter(Boolean);
+
+  patientLines.forEach((line) => {
+    page.drawText(line, {
+      x: contentLeft,
+      y,
+      size: 11,
+      font: regularFont,
+      color: COLORS.text,
+    });
+    y -= 16;
+  });
+
+  return y;
+}
+
+function drawPdfFooter(page, fonts, images, layout, settings) {
+  const { regularFont } = fonts;
+  const { signatureImage, sealImage } = images;
+  const { contentLeft, contentWidth, borderInset, contentPad } = layout;
+  const contentRight = contentLeft + contentWidth;
+  const footerY = borderInset + contentPad + 72;
+
+  drawDivider(page, footerY + 36, contentLeft, contentRight);
+
+  if (isNonEmpty(settings.doctorName)) {
+    page.drawText(settings.doctorName, {
+      x: contentLeft,
+      y: footerY + 18,
+      size: 9,
+      font: regularFont,
+      color: COLORS.muted,
+    });
+  }
+
+  page.drawText('Authorized Signature', {
+    x: contentLeft,
+    y: footerY + 2,
+    size: 9,
+    font: regularFont,
+    color: COLORS.muted,
+  });
+
+  const signatureScale = 0.35;
+  const sealScale = 0.2;
+  const signatureDims = signatureImage.scale(signatureScale);
+  const sealDims = sealImage.scale(sealScale);
+
+  const stackWidth = Math.max(signatureDims.width, sealDims.width);
+  const centerX = contentLeft + (contentWidth - stackWidth) / 2;
+
+  const sealX = centerX + (stackWidth - sealDims.width) / 2;
+  const sealY = borderInset + contentPad;
+
+  const signatureX = centerX + (stackWidth - signatureDims.width) / 2;
+  const signatureBaseY = sealY + sealDims.height + 12;
+
+  page.drawImage(signatureImage, {
+    x: signatureX,
+    y: signatureBaseY,
+    width: signatureDims.width,
+    height: signatureDims.height,
+  });
+
+  page.drawImage(sealImage, {
+    x: sealX,
+    y: sealY,
+    width: sealDims.width,
+    height: sealDims.height,
+  });
+
+  const sealLabel = 'Seal';
+  const sealLabelSize = 9;
+  const sealLabelWidth = regularFont.widthOfTextAtSize(sealLabel, sealLabelSize);
+
+  page.drawText(sealLabel, {
+    x: sealX + (sealDims.width - sealLabelWidth) / 2,
+    y: sealY - 8,
+    size: sealLabelSize,
+    font: regularFont,
+    color: COLORS.muted,
+  });
+}
+
+async function loadPdfBrandingImages(pdfDoc) {
+  const [{ pngBytes: rxBytes }, logoBytes, signatureBytes, sealBytes] = await Promise.all([
+    processRxIcon(RX_ICON_PATH),
+    loadAssetBytes(LOGO_PATH),
+    loadAssetBytes(SIGNATURE_PATH),
+    loadAssetBytes(SEAL_PATH),
+  ]);
+
+  const [logoImage, rxImage, signatureImage, sealImage] = await Promise.all([
+    pdfDoc.embedPng(logoBytes),
+    pdfDoc.embedPng(rxBytes),
+    pdfDoc.embedPng(signatureBytes),
+    pdfDoc.embedPng(sealBytes),
+  ]);
+
+  return { logoImage, rxImage, signatureImage, sealImage };
+}
+
+function getPdfPageLayout() {
+  const borderInset = 28;
+  const borderThickness = 2;
+  const contentPad = 28;
+  const frameWidth = PAGE_WIDTH - borderInset * 2;
+  const frameHeight = PAGE_HEIGHT - borderInset * 2;
+  const contentLeft = borderInset + borderThickness + contentPad;
+  const contentRight = PAGE_WIDTH - contentLeft;
+  const contentWidth = contentRight - contentLeft;
+  const frameTop = PAGE_HEIGHT - borderInset;
+  const headerTop = frameTop - contentPad;
+
+  return {
+    borderInset,
+    borderThickness,
+    contentPad,
+    frameWidth,
+    frameHeight,
+    contentLeft,
+    contentRight,
+    contentWidth,
+    frameTop,
+    headerTop,
+  };
+}
+
 async function loadAssetBytes(url) {
   const response = await fetch(url);
   const contentType = response.headers.get('content-type');
@@ -232,6 +515,19 @@ function renderIfNotEmpty(doc, label, value, x, y) {
   }
 
   return nextY;
+}
+
+function drawNumberedList(page, items, x, y, font, fontSize, maxWidth, lineHeight) {
+  let currentY = y;
+
+  items.forEach((item, index) => {
+    const label = `${index + 1}. ${item}`;
+    const lines = wrapText(label, maxWidth, font, fontSize);
+    currentY = drawLines(page, lines, x, currentY, font, fontSize, COLORS.text, lineHeight);
+    currentY -= 4;
+  });
+
+  return currentY;
 }
 
 function drawTable(page, startY, medicines, regularFont, boldFont, contentLeft, contentWidth) {
@@ -479,6 +775,191 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
   return pdfDoc.save();
 }
 
+export async function generateReferralPDF({ prescription, settings, patient }) {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const images = await loadPdfBrandingImages(pdfDoc);
+  const layout = getPdfPageLayout();
+  const {
+    contentLeft,
+    contentRight,
+    contentWidth,
+    headerTop,
+  } = layout;
+
+  drawReferralPageBorder(page, layout);
+
+  let y = drawPdfLetterHeader(
+    page,
+    { regularFont, boldFont },
+    { logoImage: images.logoImage },
+    { contentLeft, contentRight, headerTop },
+    prescription
+  );
+
+  y = drawPatientInformationSection(
+    page,
+    { regularFont, boldFont },
+    { contentLeft, contentRight, y },
+    prescription,
+    patient
+  );
+
+  y -= 16;
+  const page1StartY = y;
+  const continuationStartY = getReferralContinuationStartY(layout);
+
+  const { page: finalPage } = drawReferralContentWithPagination({
+    pdfDoc,
+    initialPage: page,
+    initialY: y,
+    page1StartY,
+    continuationStartY,
+    text: prescription.referralContent,
+    contentLeft,
+    contentWidth,
+    font: regularFont,
+    layout,
+  });
+
+  drawPdfFooter(
+    finalPage,
+    { regularFont },
+    { signatureImage: images.signatureImage, sealImage: images.sealImage },
+    {
+      contentLeft,
+      contentWidth,
+      borderInset: layout.borderInset,
+      contentPad: layout.contentPad,
+    },
+    settings
+  );
+
+  return pdfDoc.save();
+}
+
+export async function generateInvestigationPDF({ prescription, settings, patient }) {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const images = await loadPdfBrandingImages(pdfDoc);
+  const layout = getPdfPageLayout();
+  const {
+    borderInset,
+    borderThickness,
+    contentPad,
+    frameWidth,
+    frameHeight,
+    contentLeft,
+    contentRight,
+    contentWidth,
+    headerTop,
+  } = layout;
+
+  drawGradientPrescriptionBorder(
+    page,
+    { x: borderInset, y: borderInset, width: frameWidth, height: frameHeight },
+    borderThickness
+  );
+
+  let y = drawPdfLetterHeader(
+    page,
+    { regularFont, boldFont },
+    { logoImage: images.logoImage },
+    { contentLeft, contentRight, headerTop },
+    prescription
+  );
+
+  y = drawPatientInformationSection(
+    page,
+    { regularFont, boldFont },
+    { contentLeft, contentRight, y },
+    prescription,
+    patient
+  );
+
+  y -= 8;
+
+  if (isNonEmpty(prescription.investigationNotes)) {
+    page.drawText('Clinical Notes', {
+      x: contentLeft,
+      y,
+      size: 12,
+      font: boldFont,
+      color: COLORS.text,
+    });
+    y -= 18;
+    y = drawPreservedTextBlock(
+      page,
+      prescription.investigationNotes,
+      contentLeft,
+      y,
+      contentWidth,
+      regularFont,
+      11,
+      15
+    );
+    y -= 12;
+  }
+
+  const investigations = (prescription.investigations ?? [])
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
+
+  page.drawText('Investigations & Tests', {
+    x: contentLeft,
+    y,
+    size: 12,
+    font: boldFont,
+    color: COLORS.text,
+  });
+  y -= 18;
+
+  y = drawNumberedList(
+    page,
+    investigations,
+    contentLeft,
+    y,
+    regularFont,
+    11,
+    contentWidth,
+    16
+  );
+
+  const medicines = (prescription.medicines ?? []).filter((medicine) => isNonEmpty(medicine.name));
+
+  if (medicines.length > 0) {
+    y -= 8;
+    page.drawText('Medicines', {
+      x: contentLeft,
+      y,
+      size: 12,
+      font: boldFont,
+      color: COLORS.text,
+    });
+    y -= 16;
+    y = drawTable(page, y, medicines, regularFont, boldFont, contentLeft, contentWidth);
+  }
+
+  drawPdfFooter(
+    page,
+    { regularFont },
+    { signatureImage: images.signatureImage, sealImage: images.sealImage },
+    {
+      contentLeft,
+      contentWidth,
+      borderInset,
+      contentPad,
+    },
+    settings
+  );
+
+  return pdfDoc.save();
+}
+
 export function downloadPdf(pdfBytes, filename) {
   const blob = new Blob([pdfBytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
@@ -492,8 +973,20 @@ export function downloadPdf(pdfBytes, filename) {
 }
 
 export async function downloadPrescriptionPDF({ prescription, settings, patient }) {
-  const pdfBytes = await generatePrescriptionPDF({ prescription, settings, patient });
+  let pdfBytes;
+  let prefix = 'prescription';
+
+  if (prescription?.type === 'referral') {
+    pdfBytes = await generateReferralPDF({ prescription, settings, patient });
+    prefix = 'referral';
+  } else if (prescription?.type === 'investigation') {
+    pdfBytes = await generateInvestigationPDF({ prescription, settings, patient });
+    prefix = 'investigation';
+  } else {
+    pdfBytes = await generatePrescriptionPDF({ prescription, settings, patient });
+  }
+
   const safeName = prescription.patientName.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
   const datePart = new Date(prescription.createdAt).toISOString().slice(0, 10);
-  downloadPdf(pdfBytes, `prescription_${safeName}_${datePart}.pdf`);
+  downloadPdf(pdfBytes, `${prefix}_${safeName}_${datePart}.pdf`);
 }

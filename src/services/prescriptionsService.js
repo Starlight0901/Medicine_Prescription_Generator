@@ -2,6 +2,7 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -15,6 +16,14 @@ import { toISODateString } from '../utils/dateUtils';
 import { db } from './firebase';
 
 const prescriptionsCollection = collection(db, 'prescriptions');
+
+const DOCUMENT_TYPES = ['prescription', 'referral', 'investigation'];
+
+function normalizeDocumentType(value) {
+  const type = String(value ?? 'prescription').toLowerCase();
+
+  return DOCUMENT_TYPES.includes(type) ? type : 'prescription';
+}
 
 function normalizeMedicine(medicine) {
   return {
@@ -38,17 +47,32 @@ function normalizeCreatedAt(value) {
   return date.toISOString();
 }
 
+function normalizeInvestigations(investigations) {
+  if (!Array.isArray(investigations)) {
+    return [];
+  }
+
+  return investigations.map((item) => String(item ?? ''));
+}
+
 function normalizePrescription(p) {
+  const type = normalizeDocumentType(p?.type);
+
   return {
     id: String(p?.id ?? ''),
+    type,
     patientId: String(p?.patientId ?? ''),
     patientName: String(p?.patientName ?? ''),
+    createdAt: normalizeCreatedAt(p?.createdAt),
     diagnosis: String(p?.diagnosis ?? ''),
     medicines: Array.isArray(p?.medicines)
       ? p.medicines.map(normalizeMedicine)
       : [],
     notes: String(p?.notes ?? ''),
-    createdAt: normalizeCreatedAt(p?.createdAt),
+    referralTitle: String(p?.referralTitle ?? ''),
+    referralContent: String(p?.referralContent ?? ''),
+    investigationNotes: String(p?.investigationNotes ?? ''),
+    investigations: normalizeInvestigations(p?.investigations),
   };
 }
 
@@ -74,23 +98,95 @@ function mapFirestoreDoc(snapshot) {
 
   return normalizePrescription({
     id: snapshot.id,
+    type: data.type,
     patientId: data.patientId,
     patientName: data.patientName,
+    createdAt: resolveCreatedAt(data.createdAt),
     diagnosis: data.diagnosis,
     medicines: data.medicines,
     notes: data.notes,
-    createdAt: resolveCreatedAt(data.createdAt),
+    referralTitle: data.referralTitle,
+    referralContent: data.referralContent,
+    investigationNotes: data.investigationNotes,
+    investigations: data.investigations,
   });
 }
 
+function getNonEmptyMedicines(medicines) {
+  return (medicines ?? [])
+    .filter((medicine) => String(medicine?.name ?? '').trim())
+    .map(normalizeMedicine);
+}
+
+function getNonEmptyInvestigations(investigations) {
+  return (investigations ?? [])
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean);
+}
+
 function buildPrescriptionFields(prescription) {
-  return {
+  const fields = {
     patientId: prescription.patientId,
     patientName: prescription.patientName,
+    type: prescription.type,
+  };
+
+  if (prescription.type === 'referral') {
+    return {
+      ...fields,
+      referralTitle: prescription.referralTitle,
+      referralContent: prescription.referralContent,
+    };
+  }
+
+  if (prescription.type === 'investigation') {
+    const filteredMedicines = getNonEmptyMedicines(prescription.medicines);
+    const investigationFields = {
+      ...fields,
+      investigationNotes: prescription.investigationNotes,
+      investigations: getNonEmptyInvestigations(prescription.investigations),
+    };
+
+    if (filteredMedicines.length > 0) {
+      investigationFields.medicines = filteredMedicines;
+    }
+
+    return investigationFields;
+  }
+
+  return {
+    ...fields,
     diagnosis: prescription.diagnosis,
     medicines: prescription.medicines,
     notes: prescription.notes,
   };
+}
+
+function buildFieldsToClear(type) {
+  const clears = {};
+
+  if (type === 'referral') {
+    clears.diagnosis = deleteField();
+    clears.medicines = deleteField();
+    clears.notes = deleteField();
+    clears.investigationNotes = deleteField();
+    clears.investigations = deleteField();
+    return clears;
+  }
+
+  if (type === 'investigation') {
+    clears.diagnosis = deleteField();
+    clears.notes = deleteField();
+    clears.referralTitle = deleteField();
+    clears.referralContent = deleteField();
+    return clears;
+  }
+
+  clears.referralTitle = deleteField();
+  clears.referralContent = deleteField();
+  clears.investigationNotes = deleteField();
+  clears.investigations = deleteField();
+  return clears;
 }
 
 function mapFirestoreError(error) {
@@ -175,7 +271,14 @@ export async function updatePrescription(id, updates) {
       createdAt: existing.createdAt,
     });
 
-    await updateDoc(prescriptionRef, buildPrescriptionFields(updatedPrescription));
+    await updateDoc(prescriptionRef, {
+      ...buildPrescriptionFields(updatedPrescription),
+      ...buildFieldsToClear(updatedPrescription.type),
+      ...(updatedPrescription.type === 'investigation' &&
+      getNonEmptyMedicines(updatedPrescription.medicines).length === 0
+        ? { medicines: deleteField() }
+        : {}),
+    });
 
     return updatedPrescription;
   } catch (error) {

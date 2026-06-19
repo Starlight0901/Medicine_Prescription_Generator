@@ -87,8 +87,8 @@ function NewPrescription() {
     <section className="prescription-page">
       <header className="page-header">
         <div className="page-title-group">
-          <h1>New Prescription</h1>
-          <p>Create a prescription, save it to history, and download a PDF.</p>
+          <h1>Create Medical Document</h1>
+          <p>Create a prescription, referral letter, or investigation request, save it to history, and download a PDF.</p>
         </div>
       </header>
 

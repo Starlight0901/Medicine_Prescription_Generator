@@ -1,3 +1,5 @@
+import { resolveDocumentType } from './prescriptionFormUtils';
+
 export function sortByNewestFirst(items, dateField = 'createdAt') {
   return [...items].sort(
     (a, b) => new Date(b[dateField]) - new Date(a[dateField])
@@ -46,12 +48,22 @@ export function filterByDate(items, dateFilter, dateField = 'createdAt') {
   return items.filter((item) => matchesDateFilter(item[dateField], dateFilter));
 }
 
+export function filterByDocumentType(items, documentType) {
+  if (!documentType) return items;
+
+  return items.filter((item) => resolveDocumentType(item.type) === documentType);
+}
+
 export function applyPrescriptionFilters(
   items,
-  { searchQuery = '', dateFilter = { day: '', month: '', year: '' } } = {}
+  {
+    searchQuery = '',
+    dateFilter = { day: '', month: '', year: '' },
+    documentTypeFilter = '',
+  } = {}
 ) {
   const filtered = filterByDate(
-    filterByPatientName(items, searchQuery),
+    filterByDocumentType(filterByPatientName(items, searchQuery), documentTypeFilter),
     dateFilter
   );
 
@@ -80,6 +92,26 @@ export function extractDateFilterOptions(items, dateField = 'createdAt') {
 }
 
 export function getPrescriptionPreview(prescription, maxLength = 80) {
+  if (prescription.type === 'referral') {
+    const parts = [prescription.referralTitle, prescription.referralContent].filter(Boolean);
+    const text = parts.join(' · ') || 'Referral letter';
+
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength).trim()}…`;
+  }
+
+  if (prescription.type === 'investigation') {
+    const investigationItems = (prescription.investigations ?? [])
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+      .join(', ');
+    const parts = [prescription.investigationNotes, investigationItems].filter(Boolean);
+    const text = parts.join(' · ') || 'Investigation request';
+
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength).trim()}…`;
+  }
+
   const medicineNames = (prescription.medicines ?? [])
     .map((medicine) => medicine.name)
     .filter(Boolean)
@@ -97,3 +129,10 @@ export const EMPTY_DATE_FILTER = {
   month: '',
   year: '',
 };
+
+export const DOCUMENT_TYPE_FILTER_OPTIONS = [
+  { value: '', label: 'All Documents' },
+  { value: 'prescription', label: 'Prescriptions' },
+  { value: 'referral', label: 'Referral Letters' },
+  { value: 'investigation', label: 'Investigations' },
+];

@@ -16,10 +16,10 @@ export function buildPrescriptionPayload({
 
   const filteredMedicines = medicines.filter((medicine) => medicine.name.trim());
 
-  if (!diagnosis.trim() || filteredMedicines.length === 0) {
+  if (filteredMedicines.length === 0) {
     return {
       success: false,
-      message: 'Diagnosis and at least one medicine are required.',
+      message: 'At least one medicine is required.',
     };
   }
 

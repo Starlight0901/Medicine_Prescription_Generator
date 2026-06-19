@@ -84,7 +84,7 @@ function PrescriptionForm({
       )}
 
       <div className="form-group">
-        <label htmlFor="diagnosis">Diagnosis</label>
+        <label htmlFor="diagnosis">Diagnosis (optional)</label>
         <input
           id="diagnosis"
           type="text"

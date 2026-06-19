@@ -24,10 +24,12 @@ function PrescriptionDetail({
       </header>
 
       <dl className="prescription-detail-body">
-        <div>
-          <dt>Diagnosis</dt>
-          <dd>{prescription.diagnosis}</dd>
-        </div>
+        {prescription.diagnosis && (
+          <div>
+            <dt>Diagnosis</dt>
+            <dd>{prescription.diagnosis}</dd>
+          </div>
+        )}
 
         <div>
           <dt>Medicines</dt>

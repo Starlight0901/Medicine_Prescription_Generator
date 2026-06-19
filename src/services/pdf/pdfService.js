@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { LOGO_PATH, RX_ICON_PATH } from '../../data/branding';
+import { LOGO_PATH, RX_ICON_PATH, SEAL_PATH, SIGNATURE_PATH } from '../../data/branding';
 import { calculateAge, formatDate } from '../../utils/dateUtils';
 import { processRxIcon } from '../../utils/rxIconProcessor';
 
@@ -14,82 +14,6 @@ const COLORS = {
   border: rgb(0.75, 0.75, 0.75),
   tableHeader: rgb(0.93, 0.95, 0.98),
 };
-
-function loadImageElement(url) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const isExternal =
-      url.startsWith('http') &&
-      typeof window !== 'undefined' &&
-      !url.startsWith(window.location.origin);
-
-    if (isExternal) {
-      image.crossOrigin = 'anonymous';
-    }
-
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
-    image.src = url;
-  });
-}
-
-async function imageElementToPngBytes(image) {
-  const canvas = document.createElement('canvas');
-  canvas.width = image.naturalWidth || image.width;
-  canvas.height = image.naturalHeight || image.height;
-
-  const context = canvas.getContext('2d');
-  context.drawImage(image, 0, 0);
-
-  const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (!result) {
-        reject(new Error('Unable to convert image to PNG.'));
-        return;
-      }
-      resolve(result);
-    }, 'image/png');
-  });
-
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-async function createPlaceholderImageBytes(label) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 220;
-  canvas.height = 90;
-
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#f4f6f8';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = '#c5ccd3';
-  context.lineWidth = 2;
-  context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-  context.fillStyle = '#5f6b7a';
-  context.font = '16px Arial';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText(label, canvas.width / 2, canvas.height / 2);
-
-  const blob = await new Promise((resolve) => {
-    canvas.toBlob(resolve, 'image/png');
-  });
-
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-async function resolveImageBytes(url, placeholderLabel) {
-  if (url) {
-    try {
-      const image = await loadImageElement(url);
-      return imageElementToPngBytes(image);
-    } catch {
-      // Fall back to placeholder when URL fails or CORS blocks the image.
-    }
-  }
-
-  return createPlaceholderImageBytes(placeholderLabel);
-}
 
 function wrapText(text, maxWidth, font, fontSize) {
   const words = String(text ?? '').split(/\s+/).filter(Boolean);
@@ -113,6 +37,34 @@ function wrapText(text, maxWidth, font, fontSize) {
   if (lines.length === 0) lines.push('');
 
   return lines;
+}
+
+async function loadAssetBytes(url) {
+  const response = await fetch(url);
+  const contentType = response.headers.get('content-type');
+
+  console.log('[loadAssetBytes]', {
+    url,
+    status: response.status,
+    contentType,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load asset: ${url}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+
+  console.log('[loadAssetBytes] byte length:', bytes.byteLength);
+
+  if (bytes.byteLength < 1000) {
+    throw new Error(
+      `Asset too small (${bytes.byteLength} bytes), likely empty or corrupted: ${url}`
+    );
+  }
+
+  return bytes;
 }
 
 function drawLines(page, lines, x, y, font, fontSize, color, lineHeight) {
@@ -188,16 +140,6 @@ function drawGradientPrescriptionBorder(page, rect, thickness = 2) {
   drawGradientEdge(page, topRight, bottomRight, GRADIENT_BORDER.lightBlue, GRADIENT_BORDER.darkBlue, thickness);
   drawGradientEdge(page, bottomRight, bottomLeft, GRADIENT_BORDER.darkBlue, GRADIENT_BORDER.olive, thickness);
   drawGradientEdge(page, bottomLeft, topLeft, GRADIENT_BORDER.olive, GRADIENT_BORDER.darkBlue, thickness);
-}
-
-async function loadAssetBytes(url) {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Failed to load asset: ${url}`);
-  }
-
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 function drawPdfBrandingHeader(page, fonts, images, layout, prescription) {
@@ -375,9 +317,14 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
   const [{ pngBytes: rxBytes }, logoBytes, signatureBytes, sealBytes] = await Promise.all([
     processRxIcon(RX_ICON_PATH),
     loadAssetBytes(LOGO_PATH),
-    resolveImageBytes(settings.signatureImageUrl, 'Signature'),
-    resolveImageBytes(settings.sealImageUrl, 'Seal'),
+    loadAssetBytes(SIGNATURE_PATH),
+    loadAssetBytes(SEAL_PATH),
   ]);
+
+  console.log('[generatePrescriptionPDF] before embed:', {
+    signatureBytesLength: signatureBytes.byteLength,
+    sealBytesLength: sealBytes.byteLength,
+  });
 
   const [logoImage, rxImage, signatureImage, sealImage] = await Promise.all([
     pdfDoc.embedPng(logoBytes),
@@ -489,26 +436,42 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
     color: COLORS.muted,
   });
 
-  const signatureDims = signatureImage.scale(0.35);
+  const signatureScale = 0.35;
+  const sealScale = 0.2;
+  const signatureDims = signatureImage.scale(signatureScale);
+  const sealDims = sealImage.scale(sealScale);
+
+  const stackWidth = Math.max(signatureDims.width, sealDims.width);
+  const centerX = contentLeft + (contentWidth - stackWidth) / 2;
+
+  const sealX = centerX + (stackWidth - sealDims.width) / 2;
+  const sealY = borderInset + contentPad;
+
+  const signatureX = centerX + (stackWidth - signatureDims.width) / 2;
+  const signatureBaseY = sealY + sealDims.height + 12;
+
   page.drawImage(signatureImage, {
-    x: contentLeft,
-    y: borderInset + contentPad,
+    x: signatureX,
+    y: signatureBaseY,
     width: signatureDims.width,
     height: signatureDims.height,
   });
 
-  const sealDims = sealImage.scale(0.3);
   page.drawImage(sealImage, {
-    x: contentRight - sealDims.width,
-    y: borderInset + contentPad,
+    x: sealX,
+    y: sealY,
     width: sealDims.width,
     height: sealDims.height,
   });
 
-  page.drawText('Seal', {
-    x: contentRight - sealDims.width,
-    y: borderInset + contentPad - 8,
-    size: 9,
+  const sealLabel = 'Seal';
+  const sealLabelSize = 9;
+  const sealLabelWidth = regularFont.widthOfTextAtSize(sealLabel, sealLabelSize);
+
+  page.drawText(sealLabel, {
+    x: sealX + (sealDims.width - sealLabelWidth) / 2,
+    y: sealY - 8,
+    size: sealLabelSize,
     font: regularFont,
     color: COLORS.muted,
   });

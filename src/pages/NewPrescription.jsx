@@ -8,7 +8,7 @@ import { ROUTES } from '../data/constants';
 import { getPatients, savePrescription } from '../services/apiService';
 import { downloadPrescriptionPDF } from '../services/pdf';
 import { generateId } from '../utils/idGenerator';
-import { calculateAge, toISODateString } from '../utils/dateUtils';
+import { resolvePatientAge, toISODateString } from '../utils/dateUtils';
 import { buildPrescriptionPayload } from '../utils/prescriptionFormUtils';
 
 function NewPrescription() {
@@ -104,7 +104,8 @@ function NewPrescription() {
                 <div className="selected-patient-summary">
                   <strong>{selectedPatient.name}</strong>
                   <span>
-                    {calculateAge(selectedPatient.dateOfBirth) ?? '—'} yrs · {selectedPatient.gender}
+                    Age: {resolvePatientAge(selectedPatient) ?? '—'}
+                    {selectedPatient.gender ? ` · ${selectedPatient.gender}` : ''}
                     {selectedPatient.phone ? ` · ${selectedPatient.phone}` : ''}
                   </span>
                 </div>

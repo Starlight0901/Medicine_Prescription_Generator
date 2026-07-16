@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { toDateInputValue } from '../utils/dateUtils';
 import {
   DOCUMENT_TYPES,
   EMPTY_MEDICINE,
@@ -22,6 +23,8 @@ function PrescriptionForm({
   initialPatientId = '',
   initialDocumentType = DOCUMENT_TYPES.PRESCRIPTION,
   showDocumentTypeSelector = true,
+  showDateField = false,
+  initialCreatedAt = '',
   initialDiagnosis = '',
   initialMedicines = [{ ...EMPTY_MEDICINE }],
   initialNotes = '',
@@ -41,6 +44,14 @@ function PrescriptionForm({
   const patientId = isPatientControlled ? controlledPatientId : uncontrolledPatientId;
   const setPatientId = onPatientIdChange ?? setUncontrolledPatientId;
   const [documentType, setDocumentType] = useState(initialDocumentType);
+  const [prescriptionDate, setPrescriptionDate] = useState(() => {
+    if (initialCreatedAt) {
+      return toDateInputValue(initialCreatedAt) || getCurrentDateInputValue();
+    }
+
+    return getCurrentDateInputValue();
+  });
+  const [hasEditedPrescriptionDate, setHasEditedPrescriptionDate] = useState(false);
   const [diagnosis, setDiagnosis] = useState(initialDiagnosis);
   const [notes, setNotes] = useState(initialNotes);
   const [referralTitle, setReferralTitle] = useState(initialReferralTitle);
@@ -57,6 +68,28 @@ function PrescriptionForm({
   const isPrescription = documentType === DOCUMENT_TYPES.PRESCRIPTION;
   const isReferral = documentType === DOCUMENT_TYPES.REFERRAL;
   const isInvestigation = documentType === DOCUMENT_TYPES.INVESTIGATION;
+
+  function getCurrentDateInputValue() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  }
+
+  function serializePrescriptionDate(value) {
+    if (!value) return null;
+
+    const [year, month, day] = value.split('-').map(Number);
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+      return null;
+    }
+
+    const parsedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    return parsedDate.toISOString();
+  }
 
   const referralPageEstimate = useMemo(() => {
     if (!isReferral) {
@@ -110,6 +143,9 @@ function PrescriptionForm({
       referralContent,
       investigationNotes,
       investigations,
+      createdAt: showDateField && hasEditedPrescriptionDate
+        ? serializePrescriptionDate(prescriptionDate)
+        : undefined,
     });
 
     if (result?.message) {
@@ -137,6 +173,21 @@ function PrescriptionForm({
               </option>
             ))}
           </select>
+        </div>
+      )}
+
+      {showDateField && (
+        <div className="form-group">
+          <label htmlFor="prescriptionDate">Prescription Date</label>
+          <input
+            id="prescriptionDate"
+            type="date"
+            value={prescriptionDate}
+            onChange={(event) => {
+              setPrescriptionDate(event.target.value);
+              setHasEditedPrescriptionDate(true);
+            }}
+          />
         </div>
       )}
 

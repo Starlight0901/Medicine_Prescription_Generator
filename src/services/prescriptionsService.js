@@ -10,6 +10,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
 } from 'firebase/firestore';
 import { toISODateString } from '../utils/dateUtils';
@@ -193,6 +194,28 @@ function mapFirestoreError(error) {
   return error?.message || 'Failed to access prescriptions. Please try again.';
 }
 
+function resolveCreatedAtForFirestore(value) {
+  if (value === undefined || value === null || value === '') {
+    return serverTimestamp();
+  }
+
+  if (typeof value?.toDate === 'function') {
+    return value.toDate();
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return serverTimestamp();
+  }
+
+  return Timestamp.fromDate(parsedDate);
+}
+
 export async function getAllPrescriptions() {
   try {
     const prescriptionsQuery = query(
@@ -232,12 +255,13 @@ export async function getPrescriptionsByPatientId(patientId) {
 export async function createPrescription(prescriptionData) {
   const newPrescription = normalizePrescription(prescriptionData);
   const fields = buildPrescriptionFields(newPrescription);
+  const createdAtValue = resolveCreatedAtForFirestore(prescriptionData?.createdAt);
 
   if (newPrescription.id) {
     const prescriptionRef = doc(db, 'prescriptions', newPrescription.id);
     await setDoc(prescriptionRef, {
       ...fields,
-      createdAt: serverTimestamp(),
+      createdAt: createdAtValue,
     });
 
     const snapshot = await getDoc(prescriptionRef);
@@ -246,7 +270,7 @@ export async function createPrescription(prescriptionData) {
 
   const docRef = await addDoc(prescriptionsCollection, {
     ...fields,
-    createdAt: serverTimestamp(),
+    createdAt: createdAtValue,
   });
 
   const snapshot = await getDoc(docRef);

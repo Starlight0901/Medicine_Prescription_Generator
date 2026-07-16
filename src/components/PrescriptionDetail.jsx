@@ -7,6 +7,7 @@ function PrescriptionDetail({
   onClose,
   onGeneratePdf,
   onEdit,
+  onRepeat,
   onDelete,
   isGeneratingPdf = false,
 }) {
@@ -140,6 +141,9 @@ function PrescriptionDetail({
         </button>
         <button type="button" className="btn btn-secondary" onClick={() => onEdit(prescription)}>
           Edit
+        </button>
+        <button type="button" className="btn btn-secondary" onClick={() => onRepeat?.(prescription)}>
+          Repeat
         </button>
         <button type="button" className="btn btn-danger" onClick={() => onDelete(prescription)}>
           Delete

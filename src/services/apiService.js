@@ -2,6 +2,8 @@ import {
   createPatient,
   deletePatient as deletePatientRecord,
   getAllPatients,
+  getPatientById as getPatientRecordById,
+  searchPatients as searchPatientRecords,
   updatePatient,
 } from './patientsService';
 import {
@@ -32,6 +34,14 @@ export async function savePatient(patient) {
 
 export async function deletePatient(id) {
   return deletePatientRecord(id);
+}
+
+export async function getPatientById(id) {
+  return getPatientRecordById(id);
+}
+
+export async function searchPatients(queryText) {
+  return searchPatientRecords(queryText);
 }
 
 export async function getPrescriptions() {

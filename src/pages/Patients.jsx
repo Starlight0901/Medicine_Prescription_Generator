@@ -6,21 +6,28 @@ import {
   getPatients,
   savePatient,
 } from '../services/apiService';
-import { calculateAge, formatDate } from '../utils/dateUtils';
+import { formatDate, resolvePatientAge } from '../utils/dateUtils';
 
-function filterPatientsByName(patients, query) {
+const INITIAL_PATIENT_LIMIT = 8;
+
+function filterPatientsByQuery(patients, query) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return patients;
 
-  return patients.filter((patient) =>
-    patient.name.toLowerCase().includes(normalizedQuery)
-  );
+  return patients.filter((patient) => {
+    const name = String(patient.name ?? '').toLowerCase();
+    const phone = String(patient.phone ?? '').toLowerCase();
+    const patientId = String(patient.id ?? '').toLowerCase();
+
+    return name.includes(normalizedQuery) || phone.includes(normalizedQuery) || patientId.includes(normalizedQuery);
+  });
 }
 
 function Patients() {
   const [allPatients, setAllPatients] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [query, setQuery] = useState('');
+  const [visibleCount, setVisibleCount] = useState(INITIAL_PATIENT_LIMIT);
   const [formMode, setFormMode] = useState(null);
   const [editingPatient, setEditingPatient] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
@@ -40,18 +47,26 @@ function Patients() {
   }, [refreshKey]);
 
   const patients = useMemo(
-    () => filterPatientsByName(allPatients, query),
+    () => filterPatientsByQuery(allPatients, query),
     [allPatients, query]
   );
 
+  const visiblePatients = useMemo(() => patients.slice(0, visibleCount), [patients, visibleCount]);
+
   function refreshList() {
     setRefreshKey((current) => current + 1);
+    setVisibleCount(INITIAL_PATIENT_LIMIT);
   }
 
   function openAddForm() {
     setEditingPatient(null);
     setFormMode('add');
     setStatusMessage('');
+  }
+
+  function handleSearchChange(event) {
+    setQuery(event.target.value);
+    setVisibleCount(INITIAL_PATIENT_LIMIT);
   }
 
   function openEditForm(patient) {
@@ -155,61 +170,78 @@ function Patients() {
         <CardBody>
           <div className="patients-toolbar">
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label htmlFor="patient-search">Search by name</label>
+              <label htmlFor="patient-search">Search patients</label>
               <input
                 id="patient-search"
                 type="search"
-                placeholder="Search patients…"
+                placeholder="Search by name, phone, or ID…"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={handleSearchChange}
               />
             </div>
+            <p className="patients-toolbar-hint">
+              Showing {visiblePatients.length} of {patients.length} matching patients.
+            </p>
           </div>
 
           {patients.length === 0 ? (
             <div className="empty-state">No patients found.</div>
           ) : (
-            <div className="table-wrapper">
-              <table className="patients-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Age</th>
-                    <th>Gender</th>
-                    <th>Phone</th>
-                    <th>Registered</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {patients.map((patient) => (
-                    <tr key={patient.id}>
-                      <td data-label="Name">{patient.name}</td>
-                      <td data-label="Age">{calculateAge(patient.dateOfBirth) ?? '—'}</td>
-                      <td data-label="Gender">{patient.gender}</td>
-                      <td data-label="Phone">{patient.phone || '—'}</td>
-                      <td data-label="Registered">{formatDate(patient.createdAt)}</td>
-                      <td className="table-actions" data-label="Actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEditForm(patient)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => handleDelete(patient)}
-                        >
-                          Delete
-                        </button>
-                      </td>
+            <>
+              <div className="table-wrapper">
+                <table className="patients-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Age</th>
+                      <th>Gender</th>
+                      <th>Phone</th>
+                      <th>Registered</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visiblePatients.map((patient) => (
+                      <tr key={patient.id}>
+                        <td data-label="Name">{patient.name}</td>
+                        <td data-label="Age">{resolvePatientAge(patient) ?? '—'}</td>
+                        <td data-label="Gender">{patient.gender}</td>
+                        <td data-label="Phone">{patient.phone || '—'}</td>
+                        <td data-label="Registered">{formatDate(patient.createdAt)}</td>
+                        <td className="table-actions" data-label="Actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openEditForm(patient)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleDelete(patient)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {patients.length > visiblePatients.length && (
+                <div className="patients-load-more">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setVisibleCount((current) => current + INITIAL_PATIENT_LIMIT)}
+                  >
+                    Load more patients
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </CardBody>
       </Card>

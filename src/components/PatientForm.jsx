@@ -1,9 +1,14 @@
 import { useState } from 'react';
-import { toDateInputValue } from '../utils/dateUtils';
+import {
+  MAX_AGE,
+  MIN_AGE,
+  resolveInitialPatientAge,
+  validateAgeInput,
+} from '../utils/patientUtils';
 
 export const EMPTY_PATIENT_FORM = {
   name: '',
-  dateOfBirth: '',
+  age: '',
   gender: '',
   phone: '',
 };
@@ -19,9 +24,9 @@ function PatientForm({
 }) {
   const fieldId = (name) => `${formIdPrefix}-${name}`;
   const [formData, setFormData] = useState({
-    ...EMPTY_PATIENT_FORM,
-    ...initialValues,
-    dateOfBirth: toDateInputValue(initialValues.dateOfBirth),
+    name: initialValues.name ?? '',
+    age: resolveInitialPatientAge(initialValues),
+    gender: initialValues.gender ?? '',
     phone: initialValues.phone ?? '',
   });
   const [errors, setErrors] = useState({});
@@ -41,7 +46,31 @@ function PatientForm({
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const result = await onSubmit(formData);
+
+    const nextErrors = {};
+
+    if (!String(formData.name ?? '').trim()) {
+      nextErrors.name = 'Name is required.';
+    }
+
+    const ageError = validateAgeInput(formData.age);
+    if (ageError) {
+      nextErrors.age = ageError;
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    const age = Number(formData.age);
+
+    const result = await onSubmit({
+      name: formData.name,
+      age,
+      gender: formData.gender,
+      phone: formData.phone,
+    });
 
     if (result?.errors) {
       setErrors(result.errors);
@@ -64,16 +93,20 @@ function PatientForm({
       </div>
 
       <div className="form-group">
-        <label htmlFor={fieldId('dateOfBirth')}>Date of birth (required)</label>
+        <label htmlFor={fieldId('age')}>Age (required)</label>
         <input
-          id={fieldId('dateOfBirth')}
-          name="dateOfBirth"
-          type="date"
-          value={formData.dateOfBirth}
+          id={fieldId('age')}
+          name="age"
+          type="number"
+          inputMode="numeric"
+          min={MIN_AGE}
+          max={MAX_AGE}
+          step={1}
+          value={formData.age}
           onChange={handleChange}
-          max={new Date().toISOString().slice(0, 10)}
+          placeholder="Age in years"
         />
-        {errors.dateOfBirth && <p className="form-error">{errors.dateOfBirth}</p>}
+        {errors.age && <p className="form-error">{errors.age}</p>}
       </div>
 
       <div className="form-group">

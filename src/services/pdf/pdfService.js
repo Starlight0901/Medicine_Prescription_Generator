@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { LOGO_PATH, RX_ICON_PATH, SEAL_PATH, SIGNATURE_PATH } from '../../data/branding';
-import { calculateAge, formatDate } from '../../utils/dateUtils';
+import { formatDate, resolvePatientAge } from '../../utils/dateUtils';
 import { processRxIcon } from '../../utils/rxIconProcessor';
 
 const PAGE_WIDTH = 595.28;
@@ -189,7 +189,7 @@ function drawPatientInformationSection(page, fonts, layout, prescription, patien
   });
   y -= 20;
 
-  const patientAge = calculateAge(patient?.dateOfBirth);
+  const patientAge = resolvePatientAge(patient);
   const patientLines = [
     `Name: ${prescription.patientName}`,
     patientAge != null ? `Age: ${patientAge}` : null,
@@ -666,7 +666,7 @@ export async function generatePrescriptionPDF({ prescription, settings, patient 
   });
   y -= 20;
 
-  const patientAge = calculateAge(patient?.dateOfBirth);
+  const patientAge = resolvePatientAge(patient);
   const patientLines = [
     `Name: ${prescription.patientName}`,
     patientAge != null ? `Age: ${patientAge}` : null,

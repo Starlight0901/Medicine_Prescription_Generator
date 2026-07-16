@@ -10,37 +10,15 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { toISODateString } from '../utils/dateUtils';
+import {
+  buildPatientPayload,
+  normalizePatientInput,
+  resolveBirthYearFromPatientData,
+  validatePatientInput,
+} from '../utils/patientUtils';
 import { db } from './firebase';
 
 const patientsCollection = collection(db, 'patients');
-
-function normalizePatientInput({ name, dateOfBirth, gender, phone }) {
-  return {
-    name: name.trim(),
-    dateOfBirth: String(dateOfBirth ?? '').trim(),
-    gender: gender.trim(),
-    phone: String(phone ?? '').trim(),
-  };
-}
-
-function validatePatientInput(patient) {
-  const errors = {};
-
-  if (!patient.name) errors.name = 'Name is required.';
-
-  if (!patient.dateOfBirth) {
-    errors.dateOfBirth = 'Date of birth is required.';
-  } else {
-    const dob = new Date(patient.dateOfBirth);
-    if (Number.isNaN(dob.getTime())) {
-      errors.dateOfBirth = 'Enter a valid date of birth.';
-    } else if (dob > new Date()) {
-      errors.dateOfBirth = 'Date of birth cannot be in the future.';
-    }
-  }
-
-  return errors;
-}
 
 function mapFirestoreError(error) {
   return error?.message || 'Failed to access patients. Please try again.';
@@ -52,20 +30,10 @@ function mapPatientDoc(snapshot) {
   return {
     id: snapshot.id,
     name: data.name ?? '',
-    dateOfBirth: data.dateOfBirth ?? '',
+    birthYear: resolveBirthYearFromPatientData(data),
     gender: data.gender ?? '',
     phone: String(data.phone ?? '').trim(),
     createdAt: data.createdAt ?? '',
-  };
-}
-
-function buildPatientPayload(patient) {
-  return {
-    name: patient.name,
-    dateOfBirth: patient.dateOfBirth,
-    gender: patient.gender,
-    phone: patient.phone,
-    createdAt: patient.createdAt,
   };
 }
 
@@ -89,7 +57,13 @@ export async function createPatient(patientInput) {
   }
 
   const createdAt = toISODateString();
-  const payload = buildPatientPayload({ ...patient, createdAt });
+  const payload = buildPatientPayload({
+    name: patient.name,
+    birthYear: patient.birthYear,
+    gender: patient.gender,
+    phone: patient.phone,
+    createdAt,
+  });
 
   try {
     const docRef = await addDoc(patientsCollection, payload);
@@ -123,7 +97,10 @@ export async function updatePatient(id, patientInput) {
 
     const existing = mapPatientDoc(snapshot);
     const payload = buildPatientPayload({
-      ...patient,
+      name: patient.name,
+      birthYear: patient.birthYear,
+      gender: patient.gender,
+      phone: patient.phone,
       createdAt: existing.createdAt,
     });
 
@@ -154,5 +131,36 @@ export async function deletePatient(id) {
   } catch (error) {
     console.error('Failed to delete patient from Firestore:', error);
     return { success: false, error: mapFirestoreError(error) };
+  }
+}
+
+export async function getPatientById(id) {
+  try {
+    const patientRef = doc(db, 'patients', id);
+    const snapshot = await getDoc(patientRef);
+    if (!snapshot.exists()) {
+      return null;
+    }
+    return mapPatientDoc(snapshot);
+  } catch (error) {
+    console.error('Failed to get patient by ID:', error);
+    return null;
+  }
+}
+
+export async function searchPatients(queryText) {
+  try {
+    const patients = await getAllPatients();
+    if (!queryText) {
+      return patients;
+    }
+    const cleanQuery = String(queryText).toLowerCase().trim();
+    return patients.filter((patient) =>
+      patient.name.toLowerCase().includes(cleanQuery) ||
+      (patient.phone && patient.phone.toLowerCase().includes(cleanQuery))
+    );
+  } catch (error) {
+    console.error('Failed to search patients:', error);
+    return [];
   }
 }

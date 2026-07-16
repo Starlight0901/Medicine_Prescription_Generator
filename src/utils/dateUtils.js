@@ -1,3 +1,37 @@
+export function calculateAgeFromBirthYear(birthYear) {
+  if (birthYear == null || birthYear === '') {
+    return null;
+  }
+
+  const year = Number(birthYear);
+
+  if (!Number.isFinite(year) || !Number.isInteger(year)) {
+    return null;
+  }
+
+  const age = new Date().getFullYear() - year;
+  return age >= 0 ? age : null;
+}
+
+/** Resolve display age from birthYear, with legacy dateOfBirth fallback. */
+export function resolvePatientAge(patient) {
+  const ageFromBirthYear = calculateAgeFromBirthYear(patient?.birthYear);
+  if (ageFromBirthYear != null) {
+    return ageFromBirthYear;
+  }
+
+  if (!patient?.dateOfBirth) {
+    return null;
+  }
+
+  const dob = new Date(patient.dateOfBirth);
+  if (Number.isNaN(dob.getTime())) {
+    return null;
+  }
+
+  return calculateAgeFromBirthYear(dob.getFullYear());
+}
+
 export function calculateAge(dateOfBirth) {
   if (!dateOfBirth) return null;
 

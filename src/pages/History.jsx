@@ -10,7 +10,8 @@ import {
   savePrescription,
 } from '../services/apiService';
 import { downloadPrescriptionPDF } from '../services/pdf';
-import { formatDate } from '../utils/dateUtils';
+import { formatDate, toISODateString } from '../utils/dateUtils';
+import { generateId } from '../utils/idGenerator';
 import { buildPrescriptionPayload, getDocumentTypeBadge, getDocumentTypeLabel } from '../utils/prescriptionFormUtils';
 import {
   applyPrescriptionFilters,
@@ -45,9 +46,11 @@ function History() {
   const [dateFilter, setDateFilter] = useState(EMPTY_DATE_FILTER);
   const [selectedPrescriptionId, setSelectedPrescriptionId] = useState(null);
   const [editingPrescription, setEditingPrescription] = useState(null);
+  const [repeatPrescription, setRepeatPrescription] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isSavingRepeat, setIsSavingRepeat] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,9 +107,16 @@ function History() {
 
   function handleSelectPrescription(prescription) {
     setEditingPrescription(null);
+    setRepeatPrescription(null);
     setSelectedPrescriptionId((current) =>
       current === prescription.id ? null : prescription.id
     );
+  }
+
+  function closeModal() {
+    setSelectedPrescriptionId(null);
+    setEditingPrescription(null);
+    setRepeatPrescription(null);
   }
 
   async function handleGeneratePdf(prescription) {
@@ -132,6 +142,17 @@ function History() {
 
   function handleCancelEdit() {
     setEditingPrescription(null);
+  }
+
+  function handleRepeat(prescription) {
+    setRepeatPrescription(prescription);
+    setEditingPrescription(null);
+    setSelectedPrescriptionId(prescription.id);
+    setStatusMessage('');
+  }
+
+  function handleCancelRepeat() {
+    setRepeatPrescription(null);
   }
 
   async function handleUpdatePrescription(formValues) {
@@ -169,6 +190,44 @@ function History() {
       return { success: true };
     } finally {
       setIsSavingEdit(false);
+    }
+  }
+
+  async function handleRepeatPrescription(formValues) {
+    if (!repeatPrescription) {
+      return { success: false, message: 'No prescription selected to repeat.' };
+    }
+
+    const payload = buildPrescriptionPayload({
+      ...formValues,
+      patients,
+    });
+
+    if (!payload.success) {
+      return payload;
+    }
+
+    setIsSavingRepeat(true);
+
+    try {
+      const result = await savePrescription({
+        id: generateId('rx'),
+        ...payload.data,
+        createdAt: formValues.createdAt ?? toISODateString(),
+      });
+
+      if (!result.success) {
+        return { success: false, message: result.error || 'Failed to create repeated prescription.' };
+      }
+
+      setAllPrescriptions((current) => [result.data, ...current]);
+      refreshList();
+      setRepeatPrescription(null);
+      setSelectedPrescriptionId(result.data.id);
+      setStatusMessage(`${getDocumentTypeLabel(result.data.type)} repeated successfully.`);
+      return { success: true };
+    } finally {
+      setIsSavingRepeat(false);
     }
   }
 
@@ -211,93 +270,87 @@ function History() {
       )}
 
       <Card className="history-filters">
-        <div className="form-group" style={{ marginBottom: 0 }}>
-          <label htmlFor="history-search">Search by patient name</label>
-          <input
-            id="history-search"
-            type="search"
-            placeholder="Patient name…"
-            value={searchQuery}
-            onChange={(event) => {
-              setSearchQuery(event.target.value);
-              setSelectedPrescriptionId(null);
-              setEditingPrescription(null);
-            }}
-          />
-        </div>
-
-        <div className="form-group" style={{ marginBottom: 0 }}>
-          <label htmlFor="filter-document-type">Document type</label>
-          <select
-            id="filter-document-type"
-            value={documentTypeFilter}
-            onChange={(event) => {
-              setDocumentTypeFilter(event.target.value);
-              setSelectedPrescriptionId(null);
-              setEditingPrescription(null);
-            }}
-          >
-            {DOCUMENT_TYPE_FILTER_OPTIONS.map((option) => (
-              <option key={option.value || 'all'} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="history-date-filters">
+        <div className="history-filter-row">
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="filter-year">Year</label>
+            <label htmlFor="history-search">Search</label>
+            <input
+              id="history-search"
+              type="search"
+              placeholder="Patient name…"
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setSelectedPrescriptionId(null);
+                setEditingPrescription(null);
+              }}
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label htmlFor="filter-document-type">Type</label>
             <select
-              id="filter-year"
-              value={dateFilter.year}
-              onChange={(event) => handleDateFilterChange('year', event.target.value)}
+              id="filter-document-type"
+              value={documentTypeFilter}
+              onChange={(event) => {
+                setDocumentTypeFilter(event.target.value);
+                setSelectedPrescriptionId(null);
+                setEditingPrescription(null);
+              }}
             >
-              <option value="">All years</option>
-              {dateOptions.years.map((year) => (
-                <option key={year} value={year}>
-                  {year}
+              {DOCUMENT_TYPE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value || 'all'} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="filter-month">Month</label>
-            <select
-              id="filter-month"
-              value={dateFilter.month}
-              onChange={(event) => handleDateFilterChange('month', event.target.value)}
-            >
-              <option value="">All months</option>
-              {dateOptions.months.map((month) => (
-                <option key={month} value={month}>
-                  {MONTH_LABELS[month - 1]}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="filter-year">Date</label>
+            <div className="history-date-filter-stack">
+              <select
+                id="filter-year"
+                value={dateFilter.year}
+                onChange={(event) => handleDateFilterChange('year', event.target.value)}
+              >
+                <option value="">All years</option>
+                {dateOptions.years.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+              <select
+                id="filter-month"
+                value={dateFilter.month}
+                onChange={(event) => handleDateFilterChange('month', event.target.value)}
+              >
+                <option value="">All months</option>
+                {dateOptions.months.map((month) => (
+                  <option key={month} value={month}>
+                    {MONTH_LABELS[month - 1]}
+                  </option>
+                ))}
+              </select>
+              <select
+                id="filter-day"
+                value={dateFilter.day}
+                onChange={(event) => handleDateFilterChange('day', event.target.value)}
+              >
+                <option value="">All days</option>
+                {dateOptions.days.map((day) => (
+                  <option key={day} value={day}>
+                    {day}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="filter-day">Day</label>
-            <select
-              id="filter-day"
-              value={dateFilter.day}
-              onChange={(event) => handleDateFilterChange('day', event.target.value)}
-            >
-              <option value="">All days</option>
-              {dateOptions.days.map((day) => (
-                <option key={day} value={day}>
-                  {day}
-                </option>
-              ))}
-            </select>
-          </div>
+          <button type="button" className="btn btn-secondary" onClick={clearFilters}>
+            Clear
+          </button>
         </div>
-
-        <button type="button" className="btn btn-secondary" onClick={clearFilters}>
-          Clear filters
-        </button>
       </Card>
 
       <p className="history-summary">
@@ -341,43 +394,100 @@ function History() {
         </ul>
       )}
 
-      {editingPrescription && (
-        <Card className="history-edit-panel glass-card--strong">
-          <h2>Edit {getDocumentTypeLabel(editingPrescription.type).toLowerCase()}</h2>
-          <PrescriptionForm
-            key={editingPrescription.id}
-            patients={patients}
-            initialPatientId={editingPrescription.patientId}
-            initialDocumentType={editingPrescription.type}
-            showDocumentTypeSelector={false}
-            initialDiagnosis={editingPrescription.diagnosis}
-            initialMedicines={editingPrescription.medicines}
-            initialNotes={editingPrescription.notes}
-            initialReferralTitle={editingPrescription.referralTitle}
-            initialReferralContent={editingPrescription.referralContent}
-            initialInvestigationNotes={editingPrescription.investigationNotes}
-            initialInvestigations={
-              editingPrescription.investigations?.length > 0
-                ? editingPrescription.investigations
-                : ['']
-            }
-            onSubmit={handleUpdatePrescription}
-            onCancel={handleCancelEdit}
-            submitLabel="Save changes"
-            isSubmitting={isSavingEdit}
-          />
-        </Card>
-      )}
-
-      {selectedPrescription && !editingPrescription && (
-        <PrescriptionDetail
-          prescription={selectedPrescription}
-          onClose={() => setSelectedPrescriptionId(null)}
-          onGeneratePdf={handleGeneratePdf}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-          isGeneratingPdf={isGeneratingPdf}
-        />
+      {selectedPrescription && (
+        <div
+          className="history-modal-overlay"
+          onClick={closeModal}
+        >
+          <div
+            className="history-modal-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-modal-title"
+          >
+            {repeatPrescription ? (
+              <Card className="history-edit-panel glass-card--strong">
+                <div className="history-modal-header">
+                  <div>
+                    <h2 id="history-modal-title">Repeat {getDocumentTypeLabel(repeatPrescription.type).toLowerCase()}</h2>
+                    <p>{repeatPrescription.patientName}</p>
+                  </div>
+                  <button type="button" className="btn btn-ghost" onClick={handleCancelRepeat}>
+                    Cancel
+                  </button>
+                </div>
+                <PrescriptionForm
+                  key={repeatPrescription.id}
+                  patients={patients}
+                  initialPatientId={repeatPrescription.patientId}
+                  initialDocumentType={repeatPrescription.type}
+                  showDocumentTypeSelector={false}
+                  initialDiagnosis={repeatPrescription.diagnosis}
+                  initialMedicines={repeatPrescription.medicines}
+                  initialNotes={repeatPrescription.notes}
+                  initialReferralTitle={repeatPrescription.referralTitle}
+                  initialReferralContent={repeatPrescription.referralContent}
+                  initialInvestigationNotes={repeatPrescription.investigationNotes}
+                  initialInvestigations={
+                    repeatPrescription.investigations?.length > 0
+                      ? repeatPrescription.investigations
+                      : ['']
+                  }
+                  onSubmit={handleRepeatPrescription}
+                  onCancel={handleCancelRepeat}
+                  showDateField={true}
+                  submitLabel="Save repeated document"
+                  isSubmitting={isSavingRepeat}
+                />
+              </Card>
+            ) : editingPrescription ? (
+              <Card className="history-edit-panel glass-card--strong">
+                <div className="history-modal-header">
+                  <div>
+                    <h2 id="history-modal-title">Edit {getDocumentTypeLabel(editingPrescription.type).toLowerCase()}</h2>
+                    <p>{editingPrescription.patientName}</p>
+                  </div>
+                  <button type="button" className="btn btn-ghost" onClick={handleCancelEdit}>
+                    Cancel
+                  </button>
+                </div>
+                <PrescriptionForm
+                  key={editingPrescription.id}
+                  patients={patients}
+                  initialPatientId={editingPrescription.patientId}
+                  initialDocumentType={editingPrescription.type}
+                  showDocumentTypeSelector={false}
+                  initialDiagnosis={editingPrescription.diagnosis}
+                  initialMedicines={editingPrescription.medicines}
+                  initialNotes={editingPrescription.notes}
+                  initialReferralTitle={editingPrescription.referralTitle}
+                  initialReferralContent={editingPrescription.referralContent}
+                  initialInvestigationNotes={editingPrescription.investigationNotes}
+                  initialInvestigations={
+                    editingPrescription.investigations?.length > 0
+                      ? editingPrescription.investigations
+                      : ['']
+                  }
+                  onSubmit={handleUpdatePrescription}
+                  onCancel={handleCancelEdit}
+                  submitLabel="Save changes"
+                  isSubmitting={isSavingEdit}
+                />
+              </Card>
+            ) : (
+              <PrescriptionDetail
+                prescription={selectedPrescription}
+                onClose={closeModal}
+                onGeneratePdf={handleGeneratePdf}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                onRepeat={handleRepeat}
+                isGeneratingPdf={isGeneratingPdf}
+              />
+            )}
+          </div>
+        </div>
       )}
     </section>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import PatientForm from './PatientForm';
 import { getPatients, savePatient } from '../services/apiService';
-import { calculateAge } from '../utils/dateUtils';
+import { resolvePatientAge } from '../utils/dateUtils';
 
 function filterPatientsByName(patients, query) {
   const normalizedQuery = query.trim().toLowerCase();
@@ -170,7 +170,7 @@ function PatientSelectionModal({
                       <div className="patient-selection-row-info">
                         <strong>{patient.name}</strong>
                         <span>
-                          {calculateAge(patient.dateOfBirth) ?? '—'} yrs
+                          Age: {resolvePatientAge(patient) ?? '—'}
                           {patient.gender ? ` · ${patient.gender}` : ''}
                           {patient.phone ? ` · ${patient.phone}` : ''}
                         </span>

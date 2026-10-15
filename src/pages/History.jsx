@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import CertificateHistoryDetail from '../components/CertificateHistoryDetail';
 import PrescriptionDetail from '../components/PrescriptionDetail';
 import PrescriptionForm from '../components/PrescriptionForm';
 import Card from '../components/ui/Card';
+import { NAV_ICONS } from '../components/NavIcons';
 import { useSettings } from '../context/SettingsContext';
 import {
+  deleteMedicalCertificate,
   deletePrescription,
+  getAllMedicalCertificates,
   getPatients,
   getPrescriptions,
   savePrescription,
 } from '../services/apiService';
-import { downloadPrescriptionPDF } from '../services/pdf';
+import { downloadIssuedCertificatePDF, downloadPrescriptionPDF } from '../services/pdf';
 import { formatDate, toISODateString } from '../utils/dateUtils';
+import { isMedicalCertificateRecord, toCertificateHistoryRecord } from '../utils/historyRecords';
 import { generateId } from '../utils/idGenerator';
 import { buildPrescriptionPayload, getDocumentTypeBadge, getDocumentTypeLabel } from '../utils/prescriptionFormUtils';
 import {
@@ -48,24 +53,87 @@ function History() {
   const [editingPrescription, setEditingPrescription] = useState(null);
   const [repeatPrescription, setRepeatPrescription] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
+  const [statusIsError, setStatusIsError] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [confirmReady, setConfirmReady] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isSavingRepeat, setIsSavingRepeat] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [openMenuKey, setOpenMenuKey] = useState(null);
+  const [menuOpensUp, setMenuOpensUp] = useState(false);
+  const deletingRef = useRef(false);
+  const menuRef = useRef(null);
+  const menuTriggerRef = useRef(null);
+  const menuItemRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([getPatients(), getPrescriptions()]).then(([loadedPatients, loadedPrescriptions]) => {
-      if (!cancelled) {
+    Promise.all([getPatients(), getPrescriptions(), getAllMedicalCertificates()]).then(
+      ([loadedPatients, loadedPrescriptions, certificateResult]) => {
+        if (cancelled) return;
+
+        const certificates = (certificateResult?.data ?? [])
+          .map(toCertificateHistoryRecord)
+          .filter((record) => record.id);
+
         setPatients(loadedPatients);
-        setAllPrescriptions(loadedPrescriptions);
+        setAllPrescriptions([...(loadedPrescriptions ?? []), ...certificates]);
+        setHasLoaded(true);
+        setLoadError(
+          certificateResult?.success === false
+            ? certificateResult.error || 'Could not load medical certificates.'
+            : ''
+        );
       }
+    ).catch((error) => {
+      if (cancelled) return;
+      setHasLoaded(true);
+      setLoadError(error?.message || 'Could not load history.');
     });
 
     return () => {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (!pendingDelete) return undefined;
+
+    const timer = window.setTimeout(() => setConfirmReady(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [pendingDelete]);
+
+  useEffect(() => {
+    if (!openMenuKey) return undefined;
+
+    menuItemRef.current?.focus();
+
+    function closeOnOutside(event) {
+      if (menuRef.current?.contains(event.target)) return;
+      setOpenMenuKey(null);
+    }
+
+    function closeOnEscape(event) {
+      if (event.key !== 'Escape') return;
+      setOpenMenuKey(null);
+      menuTriggerRef.current?.focus();
+    }
+
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [openMenuKey]);
+
+  useEffect(() => {
+    setOpenMenuKey(null);
+  }, [searchQuery, documentTypeFilter, dateFilter, refreshKey]);
 
   const dateOptions = useMemo(
     () => extractDateFilterOptions(allPrescriptions),
@@ -106,6 +174,7 @@ function History() {
   }
 
   function handleSelectPrescription(prescription) {
+    setOpenMenuKey(null);
     setEditingPrescription(null);
     setRepeatPrescription(null);
     setSelectedPrescriptionId((current) =>
@@ -119,13 +188,22 @@ function History() {
     setRepeatPrescription(null);
   }
 
+  function formatHistoryDate(value) {
+    if (!value || Number.isNaN(new Date(value).getTime())) return '—';
+    return formatDate(value);
+  }
+
   async function handleGeneratePdf(prescription) {
     setIsGeneratingPdf(true);
     setStatusMessage('');
 
     try {
-      const patient = patients.find((entry) => entry.id === prescription.patientId) ?? null;
-      await downloadPrescriptionPDF({ prescription, settings, patient });
+      if (isMedicalCertificateRecord(prescription)) {
+        await downloadIssuedCertificatePDF(prescription.certificate);
+      } else {
+        const patient = patients.find((entry) => entry.id === prescription.patientId) ?? null;
+        await downloadPrescriptionPDF({ prescription, settings, patient });
+      }
       setStatusMessage('PDF downloaded successfully.');
     } catch (error) {
       setStatusMessage(error.message || 'Failed to generate PDF.');
@@ -231,29 +309,89 @@ function History() {
     }
   }
 
-  async function handleDelete(prescription) {
-    const confirmed = window.confirm(
-      `Delete ${getDocumentTypeLabel(prescription.type).toLowerCase()} for "${prescription.patientName}"?`
-    );
-    if (!confirmed) return;
+  function historyDocumentLabel(record) {
+    if (isMedicalCertificateRecord(record)) return 'Medical certificate';
+    return getDocumentTypeLabel(record.type);
+  }
 
-    const result = await deletePrescription(prescription.id);
+  function historyRecordKey(record) {
+    return `${record.recordKind || 'prescription'}-${record.id}`;
+  }
 
-    if (!result.success) {
-      setStatusMessage(result.error);
+  function toggleRecordMenu(record, event) {
+    const key = historyRecordKey(record);
+    if (openMenuKey === key) {
+      setOpenMenuKey(null);
       return;
     }
 
-    if (selectedPrescriptionId === prescription.id) {
-      setSelectedPrescriptionId(null);
-    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const bottomReserve = window.innerWidth < 900 ? 80 : 16;
+    const spaceBelow = window.innerHeight - rect.bottom - bottomReserve;
+    setMenuOpensUp(spaceBelow < 56);
+    setOpenMenuKey(key);
+  }
 
-    if (editingPrescription?.id === prescription.id) {
-      setEditingPrescription(null);
-    }
+  function deleteFromMenu(record) {
+    setOpenMenuKey(null);
+    requestDelete(record);
+  }
 
-    refreshList();
-    setStatusMessage(`${getDocumentTypeLabel(prescription.type)} deleted successfully.`);
+  function requestDelete(record) {
+    if (deletingRef.current) return;
+    setPendingDelete(record);
+    setConfirmReady(false);
+    setStatusMessage('');
+    setStatusIsError(false);
+  }
+
+  function cancelDelete() {
+    if (deletingRef.current) return;
+    setPendingDelete(null);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete || !confirmReady || deletingRef.current) return;
+
+    deletingRef.current = true;
+    setIsDeleting(true);
+    const record = pendingDelete;
+    const label = historyDocumentLabel(record);
+
+    try {
+      const result = isMedicalCertificateRecord(record)
+        ? await deleteMedicalCertificate(record.id)
+        : await deletePrescription(record.id);
+
+      if (!result.success) {
+        setStatusMessage(result.error || 'Could not delete the record.');
+        setStatusIsError(true);
+        return;
+      }
+
+      setAllPrescriptions((current) => current.filter((item) => (
+        item.id !== record.id
+        || (item.recordKind || 'prescription') !== (record.recordKind || 'prescription')
+      )));
+      if (selectedPrescriptionId === record.id) {
+        setSelectedPrescriptionId(null);
+        setEditingPrescription(null);
+        setRepeatPrescription(null);
+      }
+      if (editingPrescription?.id === record.id) setEditingPrescription(null);
+      if (repeatPrescription?.id === record.id) setRepeatPrescription(null);
+      setPendingDelete(null);
+      setStatusIsError(false);
+      setStatusMessage(`${label} for ${record.patientName} was deleted. This cannot be undone.`);
+      refreshList();
+    } finally {
+      deletingRef.current = false;
+      setIsDeleting(false);
+    }
+  }
+
+  async function handleDelete(prescription) {
+    requestDelete(prescription);
   }
 
   return (
@@ -261,12 +399,17 @@ function History() {
       <header className="page-header">
         <div className="page-title-group">
           <h1>Prescription History</h1>
-          <p>Browse, search, filter, and manage previously issued prescriptions.</p>
+          <p>Browse, search, and filter issued prescriptions, referrals, investigations, and medical certificates.</p>
         </div>
       </header>
 
       {statusMessage && (
-        <p className="status-message" role="status">{statusMessage}</p>
+        <p className={`status-message${statusIsError ? ' status-message--error' : ''}`} role={statusIsError ? 'alert' : 'status'}>
+          {statusMessage}
+        </p>
+      )}
+      {loadError && (
+        <p className="status-message status-message--error" role="alert">{loadError}</p>
       )}
 
       <Card className="history-filters">
@@ -276,7 +419,7 @@ function History() {
             <input
               id="history-search"
               type="search"
-              placeholder="Patient name…"
+              placeholder="Patient name or certificate details…"
               value={searchQuery}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
@@ -357,18 +500,32 @@ function History() {
         Showing {prescriptions.length} of {allPrescriptions.length} documents
       </p>
 
-      {prescriptions.length === 0 ? (
+      {!hasLoaded ? (
         <Card>
-          <div className="empty-state">No documents match your filters.</div>
+          <div className="empty-state">Loading documents…</div>
+        </Card>
+      ) : prescriptions.length === 0 ? (
+        <Card>
+          <div className="empty-state">
+            {allPrescriptions.length === 0
+              ? 'No documents yet.'
+              : 'No documents match your filters.'}
+          </div>
         </Card>
       ) : (
         <ul className="history-list">
           {prescriptions.map((prescription) => {
             const isSelected = selectedPrescriptionId === prescription.id;
-            const documentTypeBadge = getDocumentTypeBadge(prescription.type);
+            const isCertificate = isMedicalCertificateRecord(prescription);
+            const documentTypeBadge = isCertificate
+              ? (prescription.templateName || 'Medical Certificate')
+              : getDocumentTypeBadge(prescription.type);
 
             return (
-              <li key={prescription.id}>
+              <li
+                key={`${prescription.recordKind || 'prescription'}-${prescription.id}`}
+                className={`history-row${openMenuKey === historyRecordKey(prescription) ? ' is-menu-open' : ''}`}
+              >
                 <button
                   type="button"
                   className={`history-item${isSelected ? ' selected' : ''}`}
@@ -377,10 +534,14 @@ function History() {
                 >
                   <span className="history-item-main">
                     <strong>{prescription.patientName}</strong>
-                    <span>{formatDate(prescription.createdAt)}</span>
+                    <span>{formatHistoryDate(prescription.createdAt)}</span>
                   </span>
                   <span
-                    className={`document-type-badge document-type-badge--${documentTypeBadge.toLowerCase()}`}
+                    className={
+                      isCertificate
+                        ? 'document-type-badge'
+                        : `document-type-badge document-type-badge--${documentTypeBadge.toLowerCase()}`
+                    }
                   >
                     [{documentTypeBadge}]
                   </span>
@@ -388,6 +549,43 @@ function History() {
                     {getPrescriptionPreview(prescription)}
                   </span>
                 </button>
+                <div
+                  className="history-card-menu"
+                  ref={openMenuKey === historyRecordKey(prescription) ? menuRef : null}
+                >
+                  <button
+                    type="button"
+                    className="history-menu-btn"
+                    ref={openMenuKey === historyRecordKey(prescription) ? menuTriggerRef : null}
+                    aria-label="Record actions"
+                    aria-haspopup="menu"
+                    aria-expanded={openMenuKey === historyRecordKey(prescription)}
+                    aria-controls={openMenuKey === historyRecordKey(prescription) ? 'history-record-menu' : undefined}
+                    title="Record actions"
+                    onClick={(event) => toggleRecordMenu(prescription, event)}
+                  >
+                    <span className="history-menu-icon" aria-hidden="true">{NAV_ICONS.more}</span>
+                  </button>
+                  {openMenuKey === historyRecordKey(prescription) && (
+                    <div
+                      id="history-record-menu"
+                      className={`history-menu${menuOpensUp ? ' history-menu--up' : ''}`}
+                      role="menu"
+                      aria-label="Record actions"
+                    >
+                      <button
+                        type="button"
+                        className="history-menu-delete"
+                        role="menuitem"
+                        ref={menuItemRef}
+                        onClick={() => deleteFromMenu(prescription)}
+                      >
+                        <span className="history-menu-delete-icon" aria-hidden="true">{NAV_ICONS.trash}</span>
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -404,7 +602,11 @@ function History() {
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="history-modal-title"
+            aria-labelledby={
+              isMedicalCertificateRecord(selectedPrescription) && !repeatPrescription && !editingPrescription
+                ? 'certificate-history-title'
+                : 'history-modal-title'
+            }
           >
             {repeatPrescription ? (
               <Card className="history-edit-panel glass-card--strong">
@@ -475,6 +677,14 @@ function History() {
                   isSubmitting={isSavingEdit}
                 />
               </Card>
+            ) : isMedicalCertificateRecord(selectedPrescription) ? (
+              <CertificateHistoryDetail
+                record={selectedPrescription}
+                onClose={closeModal}
+                onGeneratePdf={handleGeneratePdf}
+                onDelete={requestDelete}
+                isGeneratingPdf={isGeneratingPdf}
+              />
             ) : (
               <PrescriptionDetail
                 prescription={selectedPrescription}
@@ -486,6 +696,34 @@ function History() {
                 isGeneratingPdf={isGeneratingPdf}
               />
             )}
+          </div>
+        </div>
+      )}
+
+      {pendingDelete && (
+        <div className="history-modal-overlay history-delete-overlay" role="presentation">
+          <div
+            className="history-modal-dialog history-delete-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-delete-title"
+          >
+            <h2 id="history-delete-title">Delete this {historyDocumentLabel(pendingDelete).toLowerCase()}?</h2>
+            <p>
+              {pendingDelete.patientName} · {formatHistoryDate(pendingDelete.createdAt)}
+            </p>
+            <p>This permanently deletes only this record. The patient, other documents, and certificate templates are kept.</p>
+            {statusIsError && statusMessage && (
+              <p className="form-error" role="alert">{statusMessage}</p>
+            )}
+            <div className="form-actions">
+              <button type="button" className="btn btn-secondary" onClick={cancelDelete} disabled={isDeleting} autoFocus>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-danger" onClick={confirmDelete} disabled={isDeleting || !confirmReady}>
+                {isDeleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,8 +1,14 @@
+import { isMedicalCertificateRecord } from './historyRecords';
 import { resolveDocumentType } from './prescriptionFormUtils';
+
+function historyTime(value) {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
 
 export function sortByNewestFirst(items, dateField = 'createdAt') {
   return [...items].sort(
-    (a, b) => new Date(b[dateField]) - new Date(a[dateField])
+    (a, b) => historyTime(b[dateField]) - historyTime(a[dateField])
   );
 }
 
@@ -48,10 +54,29 @@ export function filterByDate(items, dateFilter, dateField = 'createdAt') {
   return items.filter((item) => matchesDateFilter(item[dateField], dateFilter));
 }
 
+export function historyDocumentType(item) {
+  if (isMedicalCertificateRecord(item)) return 'medical-certificate';
+
+  return resolveDocumentType(item?.type);
+}
+
+export function matchesHistorySearch(item, query) {
+  const normalizedQuery = String(query ?? '').trim().toLowerCase();
+  if (!normalizedQuery) return true;
+
+  const fields = [item?.patientName];
+
+  if (isMedicalCertificateRecord(item)) {
+    fields.push(item.templateName, item.medicalStatement);
+  }
+
+  return fields.some((field) => String(field ?? '').toLowerCase().includes(normalizedQuery));
+}
+
 export function filterByDocumentType(items, documentType) {
   if (!documentType) return items;
 
-  return items.filter((item) => resolveDocumentType(item.type) === documentType);
+  return items.filter((item) => historyDocumentType(item) === documentType);
 }
 
 export function applyPrescriptionFilters(
@@ -63,7 +88,10 @@ export function applyPrescriptionFilters(
   } = {}
 ) {
   const filtered = filterByDate(
-    filterByDocumentType(filterByPatientName(items, searchQuery), documentTypeFilter),
+    filterByDocumentType(
+      items.filter((item) => matchesHistorySearch(item, searchQuery)),
+      documentTypeFilter
+    ),
     dateFilter
   );
 
@@ -92,6 +120,14 @@ export function extractDateFilterOptions(items, dateField = 'createdAt') {
 }
 
 export function getPrescriptionPreview(prescription, maxLength = 80) {
+  if (isMedicalCertificateRecord(prescription)) {
+    const text = String(prescription.medicalStatement ?? '').replace(/\s+/g, ' ').trim()
+      || 'Medical certificate';
+
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength).trim()}…`;
+  }
+
   if (prescription.type === 'referral') {
     const parts = [prescription.referralTitle, prescription.referralContent].filter(Boolean);
     const text = parts.join(' · ') || 'Referral letter';
@@ -135,4 +171,5 @@ export const DOCUMENT_TYPE_FILTER_OPTIONS = [
   { value: 'prescription', label: 'Prescriptions' },
   { value: 'referral', label: 'Referral Letters' },
   { value: 'investigation', label: 'Investigations' },
+  { value: 'medical-certificate', label: 'Medical Certificates' },
 ];

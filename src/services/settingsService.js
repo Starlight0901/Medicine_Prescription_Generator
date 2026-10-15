@@ -7,9 +7,15 @@ const settingsDocRef = doc(db, 'settings', 'system');
 export function normalizeSettings(raw = {}) {
   return {
     doctorName: String(raw.doctorName ?? '').trim(),
+    clinicAddress: String(raw.clinicAddress ?? '').trim(),
+    clinicEmail: String(raw.clinicEmail ?? '').trim(),
     signatureImageUrl: String(raw.signatureImageUrl ?? '').trim(),
     sealImageUrl: String(raw.sealImageUrl ?? '').trim(),
   };
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function validateSettings(settings) {
@@ -17,6 +23,10 @@ function validateSettings(settings) {
 
   if (!settings.doctorName) {
     errors.doctorName = 'Doctor name is required.';
+  }
+
+  if (settings.clinicEmail && !isValidEmail(settings.clinicEmail)) {
+    errors.clinicEmail = 'Enter a valid email address.';
   }
 
   return errors;

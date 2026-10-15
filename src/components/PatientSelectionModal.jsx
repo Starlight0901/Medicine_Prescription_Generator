@@ -18,8 +18,10 @@ function PatientSelectionModal({
   onClose,
   onPatientsChange,
   autoSelectOnCreate = true,
+  initialView = 'list',
+  contentClassName = '',
 }) {
-  const [view, setView] = useState('list');
+  const [view, setView] = useState(initialView === 'add' ? 'add' : 'list');
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedPatientId, setHighlightedPatientId] = useState(null);
   const [patients, setPatients] = useState(patientsProp);
@@ -114,7 +116,7 @@ function PatientSelectionModal({
       role="presentation"
     >
       <div
-        className="modal-content patient-selection-modal"
+        className={`modal-content patient-selection-modal${contentClassName ? ` ${contentClassName}` : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="patient-selection-title"

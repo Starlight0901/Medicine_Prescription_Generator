@@ -31,6 +31,20 @@ export function resolveDocumentType(type) {
   return DOCUMENT_TYPES.PRESCRIPTION;
 }
 
+export function summarizeClinicalDocuments(records) {
+  const counts = {
+    [DOCUMENT_TYPES.PRESCRIPTION]: 0,
+    [DOCUMENT_TYPES.REFERRAL]: 0,
+    [DOCUMENT_TYPES.INVESTIGATION]: 0,
+  };
+
+  (records ?? []).forEach((record) => {
+    counts[resolveDocumentType(record?.type)] += 1;
+  });
+
+  return counts;
+}
+
 export function getDocumentTypeBadge(type) {
   switch (resolveDocumentType(type)) {
     case DOCUMENT_TYPES.REFERRAL:

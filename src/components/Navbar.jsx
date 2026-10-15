@@ -6,6 +6,7 @@ import { NAV_ICON_KEYS, NAV_ICONS } from './NavIcons';
 const MOBILE_LABELS = {
   Dashboard: 'Home',
   'New Prescription': 'New Rx',
+  Certificates: 'Certs',
 };
 
 function Navbar() {

@@ -190,10 +190,6 @@ function buildFieldsToClear(type) {
   return clears;
 }
 
-function mapFirestoreError(error) {
-  return error?.message || 'Failed to access prescriptions. Please try again.';
-}
-
 function resolveCreatedAtForFirestore(value) {
   if (value === undefined || value === null || value === '') {
     return serverTimestamp();
@@ -325,6 +321,11 @@ export async function deletePrescription(id) {
     return { success: true };
   } catch (error) {
     console.error('Failed to delete prescription from Firestore:', error);
-    return { success: false, error: mapFirestoreError(error) };
+    return {
+      success: false,
+      error: error?.code === 'permission-denied'
+        ? 'You do not have permission to delete this record.'
+        : (error?.message || 'Could not delete the record. Check your connection and try again.'),
+    };
   }
 }

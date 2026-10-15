@@ -3,21 +3,87 @@ import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
 import { NAV_ICONS } from '../components/NavIcons';
 import { ROUTES } from '../data/constants';
-import { getPatients, getPrescriptions } from '../services/apiService';
+import {
+  getMedicalCertificateCount,
+  getMedicalCertificates,
+  getPatients,
+  getPrescriptions,
+} from '../services/apiService';
 import { formatDateTime } from '../utils/dateUtils';
+import { DOCUMENT_TYPES, resolveDocumentType, summarizeClinicalDocuments } from '../utils/prescriptionFormUtils';
+
+function activityTime(record) {
+  const value = record?.createdAt || record?.issuedAt || '';
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function recentByType(records, type) {
+  return records
+    .filter((record) => resolveDocumentType(record?.type) === type)
+    .sort((left, right) => activityTime(right) - activityTime(left))
+    .slice(0, 5);
+}
+
+function ActivityRows({ items, emptyLabel, description }) {
+  if (items.length === 0) {
+    return <div className="empty-state">{emptyLabel}</div>;
+  }
+
+  return (
+    <ul className="recent-list">
+      {items.map((item) => {
+        const detail = description(item);
+
+        return (
+          <li key={item.id}>
+            <div className="recent-item">
+              <div className="recent-item-top">
+                <span className="recent-item-name">{item.patientName || '—'}</span>
+                <span className="recent-item-date">
+                  {formatDateTime(item.issuedAt || item.createdAt)}
+                </span>
+              </div>
+              <span className="recent-item-diagnosis" title={detail}>{detail}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function Dashboard() {
   const [patients, setPatients] = useState([]);
   const [prescriptions, setPrescriptions] = useState([]);
+  const [recentCertificates, setRecentCertificates] = useState([]);
+  const [certificateCount, setCertificateCount] = useState(null);
+  const [certificateError, setCertificateError] = useState('');
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([getPatients(), getPrescriptions()]).then(([loadedPatients, loadedPrescriptions]) => {
-      if (!cancelled) {
-        setPatients(loadedPatients);
-        setPrescriptions(loadedPrescriptions);
-      }
+    Promise.all([
+      getPatients(),
+      getPrescriptions(),
+      getMedicalCertificates(5),
+      getMedicalCertificateCount(),
+    ]).then(([loadedPatients, loadedPrescriptions, certificateResult, countResult]) => {
+      if (cancelled) return;
+
+      setPatients(loadedPatients);
+      setPrescriptions(loadedPrescriptions);
+      setRecentCertificates(certificateResult?.data ?? []);
+      setCertificateCount(countResult?.success ? countResult.data : null);
+      setCertificateError(
+        certificateResult?.success === false
+          ? certificateResult.error || 'Could not load medical certificates.'
+          : countResult?.success === false
+            ? countResult.error || 'Could not count medical certificates.'
+            : ''
+      );
+      setHasLoaded(true);
     });
 
     return () => {
@@ -25,21 +91,11 @@ function Dashboard() {
     };
   }, []);
 
-  const recentItems = [...prescriptions].sort((left, right) => {
-    const leftTime = Date.parse(left.createdAt || 0);
-    const rightTime = Date.parse(right.createdAt || 0);
-    return rightTime - leftTime;
-  });
-
-  const recentPrescriptions = recentItems
-    .filter((item) => item?.type === 'prescription')
-    .slice(0, 5);
-  const recentReferrals = recentItems
-    .filter((item) => item?.type === 'referral')
-    .slice(0, 5);
-  const recentInvestigations = recentItems
-    .filter((item) => item?.type === 'investigation')
-    .slice(0, 5);
+  const documentCounts = summarizeClinicalDocuments(prescriptions);
+  const recentPrescriptions = recentByType(prescriptions, DOCUMENT_TYPES.PRESCRIPTION);
+  const recentReferrals = recentByType(prescriptions, DOCUMENT_TYPES.REFERRAL);
+  const recentInvestigations = recentByType(prescriptions, DOCUMENT_TYPES.INVESTIGATION);
+  const statValue = (value) => (hasLoaded ? value : '…');
 
   const quickActions = [
     {
@@ -66,6 +122,12 @@ function Dashboard() {
       label: 'History',
       ariaLabel: 'Open history',
     },
+    {
+      to: ROUTES.CERTIFICATES,
+      icon: NAV_ICONS.certificate,
+      label: 'Medical Certificates',
+      ariaLabel: 'Open medical certificates',
+    },
   ];
 
   return (
@@ -73,20 +135,39 @@ function Dashboard() {
       <header className="page-header">
         <div className="page-title-group">
           <h1>Dashboard</h1>
-          <p>Overview of your prescription activity</p>
+          <p>Overview of clinic documents</p>
         </div>
       </header>
 
-      <div className="stats-grid stats-grid--two">
+      <div className="stats-grid stats-grid--documents">
         <Card className="stat-card">
-          <div className="stat-card-label">Total Patients</div>
-          <div className="stat-card-value">{patients.length}</div>
+          <div className="stat-card-label">Patients</div>
+          <div className="stat-card-value">{statValue(patients.length)}</div>
         </Card>
         <Card className="stat-card">
           <div className="stat-card-label">Prescriptions</div>
-          <div className="stat-card-value">{prescriptions.length}</div>
+          <div className="stat-card-value">{statValue(documentCounts.prescription)}</div>
+        </Card>
+        <Card className="stat-card">
+          <div className="stat-card-label">Referrals</div>
+          <div className="stat-card-value">{statValue(documentCounts.referral)}</div>
+        </Card>
+        <Card className="stat-card">
+          <div className="stat-card-label">Tests / Investigations</div>
+          <div className="stat-card-value">{statValue(documentCounts.investigation)}</div>
+        </Card>
+        <Card className="stat-card">
+          <div className="stat-card-label">Medical Certificates</div>
+          <div className="stat-card-value">
+            {statValue(certificateCount == null ? '—' : certificateCount)}
+          </div>
         </Card>
       </div>
+      {certificateError && (
+        <p className="status-message status-message--error dashboard-inline-error" role="alert">
+          {certificateError}
+        </p>
+      )}
 
       <section className="dashboard-section">
         <div className="section-header">
@@ -125,27 +206,12 @@ function Dashboard() {
                 View all →
               </Link>
             </div>
-
             <Card>
-              {recentPrescriptions.length === 0 ? (
-                <div className="empty-state">No prescriptions yet.</div>
-              ) : (
-                <ul className="recent-list">
-                  {recentPrescriptions.map((prescription) => (
-                    <li key={prescription.id}>
-                      <div className="recent-item">
-                        <div className="recent-item-top">
-                          <span className="recent-item-name">{prescription.patientName}</span>
-                          <span className="recent-item-date">
-                            {formatDateTime(prescription.createdAt)}
-                          </span>
-                        </div>
-                        <span className="recent-item-diagnosis">{prescription.diagnosis}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ActivityRows
+                items={recentPrescriptions}
+                emptyLabel="No prescriptions yet."
+                description={(item) => item.diagnosis || 'Prescription'}
+              />
             </Card>
           </div>
 
@@ -153,29 +219,12 @@ function Dashboard() {
             <div className="activity-group-header">
               <h3>Recent Referrals</h3>
             </div>
-
             <Card>
-              {recentReferrals.length === 0 ? (
-                <div className="empty-state">No referrals yet.</div>
-              ) : (
-                <ul className="recent-list">
-                  {recentReferrals.map((referral) => (
-                    <li key={referral.id}>
-                      <div className="recent-item">
-                        <div className="recent-item-top">
-                          <span className="recent-item-name">{referral.patientName}</span>
-                          <span className="recent-item-date">
-                            {formatDateTime(referral.createdAt)}
-                          </span>
-                        </div>
-                        <span className="recent-item-diagnosis">
-                          {referral.referralTitle || 'Referral letter'}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ActivityRows
+                items={recentReferrals}
+                emptyLabel="No referrals yet."
+                description={(item) => item.referralTitle || 'Referral letter'}
+              />
             </Card>
           </div>
 
@@ -183,29 +232,28 @@ function Dashboard() {
             <div className="activity-group-header">
               <h3>Recent Investigations</h3>
             </div>
-
             <Card>
-              {recentInvestigations.length === 0 ? (
-                <div className="empty-state">No investigations yet.</div>
-              ) : (
-                <ul className="recent-list">
-                  {recentInvestigations.map((investigation) => (
-                    <li key={investigation.id}>
-                      <div className="recent-item">
-                        <div className="recent-item-top">
-                          <span className="recent-item-name">{investigation.patientName}</span>
-                          <span className="recent-item-date">
-                            {formatDateTime(investigation.createdAt)}
-                          </span>
-                        </div>
-                        <span className="recent-item-diagnosis">
-                          {investigation.investigationNotes || 'Investigation request'}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ActivityRows
+                items={recentInvestigations}
+                emptyLabel="No investigations yet."
+                description={(item) => item.investigationNotes || 'Investigation request'}
+              />
+            </Card>
+          </div>
+
+          <div className="activity-group">
+            <div className="activity-group-header">
+              <h3>Recent Medical Certificates</h3>
+              <Link to={ROUTES.HISTORY} className="section-link">
+                View all →
+              </Link>
+            </div>
+            <Card>
+              <ActivityRows
+                items={recentCertificates}
+                emptyLabel={certificateError ? 'Certificates could not be loaded.' : 'No medical certificates yet.'}
+                description={() => 'Medical Certificate'}
+              />
             </Card>
           </div>
         </div>

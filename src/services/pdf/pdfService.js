@@ -1,5 +1,7 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { LineCapStyle, PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { LOGO_PATH, RX_ICON_PATH, SEAL_PATH, SIGNATURE_PATH } from '../../data/branding';
+import { buildCertificatePdfRequest, formatCertificateDate, formatCertificateFieldValue, SALUTATIONS } from '../../utils/certificateFormUtils';
+import { resolveFieldDataType } from '../../utils/certificateTemplateUtils';
 import { formatDate, resolvePatientAge } from '../../utils/dateUtils';
 import { processRxIcon } from '../../utils/rxIconProcessor';
 
@@ -989,4 +991,481 @@ export async function downloadPrescriptionPDF({ prescription, settings, patient 
   const safeName = prescription.patientName.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
   const datePart = new Date(prescription.createdAt).toISOString().slice(0, 10);
   downloadPdf(pdfBytes, `${prefix}_${safeName}_${datePart}.pdf`);
+}
+
+const CERTIFICATE_BODY_SIZE = 12;
+const CERTIFICATE_LEADING = 18;
+const PERIOD_FIELD_KEYS = new Set(['startDate', 'endDate', 'duration']);
+const SPACE_HEIGHTS = { small: 14, medium: 28, large: 42 };
+const LETTERHEAD_FIELD_KEYS = new Set([
+  'doctorName',
+  'clinicAddress',
+  'clinicEmail',
+  'certificateDate',
+]);
+
+function certificateTitle(template) {
+  if (template?.category === 'medical-fitness') return 'MEDICAL FITNESS CERTIFICATE';
+  if (template?.category === 'other') {
+    const heading = template.blocks?.find((block) => block.type === 'heading')?.text;
+    return String(heading || 'MEDICAL CERTIFICATE').toUpperCase();
+  }
+
+  return 'MEDICAL CERTIFICATE';
+}
+
+function certificateLines(text, maxWidth, font, fontSize) {
+  return wrapTextPreservingBreaks(text, maxWidth, font, fontSize).flatMap((line) => {
+    if (!line || font.widthOfTextAtSize(line, fontSize) <= maxWidth) return [line];
+
+    const chunks = [];
+    let current = '';
+
+    Array.from(line).forEach((character) => {
+      const next = current + character;
+      if (font.widthOfTextAtSize(next, fontSize) <= maxWidth) {
+        current = next;
+        return;
+      }
+
+      if (current) chunks.push(current);
+      current = character;
+    });
+
+    if (current) chunks.push(current);
+    return chunks;
+  });
+}
+
+function drawDottedRule(page, x, y, width) {
+  page.drawLine({
+    start: { x, y },
+    end: { x: x + width, y },
+    thickness: 0.8,
+    color: COLORS.text,
+    dashArray: [0.4, 2.4],
+    lineCap: LineCapStyle.Round,
+  });
+}
+
+function drawRightAlignedLines(page, lines, right, y, font, fontSize, lineHeight) {
+  lines.forEach((line) => {
+    const width = font.widthOfTextAtSize(line, fontSize);
+    page.drawText(line, {
+      x: right - width,
+      y,
+      size: fontSize,
+      font,
+      color: COLORS.muted,
+    });
+    y -= lineHeight;
+  });
+
+  return y;
+}
+
+function drawCertificateContact(page, font, layout, settings, startY) {
+  const address = String(settings?.clinicAddress ?? '').trim();
+  const email = String(settings?.clinicEmail ?? '').trim();
+  const logoRight = layout.contentLeft + 158;
+  const columnWidth = Math.max(120, layout.contentRight - logoRight - 8);
+  const lines = [
+    ...(address ? certificateLines(address, columnWidth, font, 9) : []),
+    ...(email ? certificateLines(email, columnWidth, font, 9) : []),
+  ];
+
+  if (lines.length === 0) return startY;
+
+  return drawRightAlignedLines(page, lines.slice(0, 6), layout.contentRight, startY, font, 9, 12);
+}
+
+function buildCertificateSections(template, values) {
+  const blocks = Array.isArray(template?.blocks) ? template.blocks : [];
+  const sections = [];
+  let skippedTitle = false;
+  let periodPlaced = false;
+
+  blocks.forEach((block) => {
+    if (block.type === 'heading') {
+      if (!skippedTitle) {
+        skippedTitle = true;
+        return;
+      }
+
+      sections.push({ type: 'heading', text: block.text });
+      return;
+    }
+
+    if (block.type === 'text') {
+      sections.push({ type: 'text', text: block.text });
+      return;
+    }
+
+    if (block.type === 'space') {
+      sections.push({
+        type: 'space',
+        height: SPACE_HEIGHTS[block.size] || SPACE_HEIGHTS.small,
+      });
+      return;
+    }
+
+    if (LETTERHEAD_FIELD_KEYS.has(block.fieldKey)) return;
+
+    if (PERIOD_FIELD_KEYS.has(block.fieldKey)) {
+      if (!periodPlaced) {
+        periodPlaced = true;
+        sections.push({ type: 'period' });
+      }
+      return;
+    }
+
+    if (block.fieldKey === 'salutation') {
+      sections.push({ type: 'salutation' });
+      return;
+    }
+
+    if (block.fieldKey === 'patientName') {
+      sections.push({ type: 'name', text: values?.patientName ?? '' });
+      return;
+    }
+
+    if (block.fieldKey === 'medicalStatement') {
+      sections.push({
+        type: 'statement',
+        label: block.label,
+        text: values?.medicalStatement ?? '',
+      });
+      return;
+    }
+
+    const dataType = resolveFieldDataType(block);
+    const rawValue = values?.fieldValues?.[block.fieldKey] ?? values?.[block.fieldKey] ?? '';
+    const text = block.custom ? formatCertificateFieldValue(dataType, rawValue) : String(rawValue);
+    if (block.custom && !text) return;
+
+    if (block.custom && dataType === 'longText') {
+      sections.push({ type: 'statement', label: block.label, text });
+      return;
+    }
+
+    if (block.custom && dataType === 'date') {
+      sections.push({ type: 'labeled', label: block.label, text });
+      return;
+    }
+
+    sections.push({
+      type: 'labeled',
+      label: block.label,
+      text,
+    });
+  });
+
+  return sections;
+}
+
+function periodLine(template, values) {
+  const blocks = Array.isArray(template?.blocks) ? template.blocks : [];
+  const start = blocks.find((block) => block.fieldKey === 'startDate');
+  const end = blocks.find((block) => block.fieldKey === 'endDate');
+  const parts = [];
+
+  if (start) parts.push(`${start.label} ${formatCertificateDate(values?.startDate)}`);
+  if (end) parts.push(`${end.label} ${formatCertificateDate(values?.endDate)}`);
+
+  let line = parts.join('    ');
+  if (values?.duration != null && blocks.some((block) => block.fieldKey === 'duration')) {
+    line = `${line}    (${values.duration} days)`.trim();
+  }
+
+  return line;
+}
+
+function createCertificateState(pdfDoc, layout, fonts) {
+  const issueDateY = layout.borderInset + layout.contentPad + 72 + 36 + 18;
+
+  return {
+    pdfDoc,
+    layout,
+    fonts,
+    page: null,
+    y: 0,
+    bodyMinY: issueDateY + 24,
+    issueDateY,
+  };
+}
+
+function addCertificatePage(state, { withLetterhead = false, images, settings, createdAt } = {}) {
+  state.page = state.pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  drawReferralPageBorder(state.page, state.layout);
+
+  if (!withLetterhead) {
+    state.y = getReferralContinuationStartY(state.layout);
+    return;
+  }
+
+  const headerBottom = drawPdfBrandingHeader(
+    state.page,
+    state.fonts,
+    { logoImage: images.logoImage, rxImage: images.rxImage },
+    {
+      contentLeft: state.layout.contentLeft,
+      contentRight: state.layout.contentRight,
+      headerTop: state.layout.headerTop,
+    },
+    { createdAt }
+  );
+  const contactBottom = drawCertificateContact(
+    state.page,
+    state.fonts.regularFont,
+    state.layout,
+    settings,
+    state.layout.headerTop - 32 - 28
+  );
+
+  state.y = Math.min(headerBottom, contactBottom) - 16;
+}
+
+function ensureCertificateRoom(state, height) {
+  if (state.y - height >= state.bodyMinY) return;
+  addCertificatePage(state);
+}
+
+function drawCertificateTitle(state, template) {
+  const title = certificateTitle(template);
+  const { boldFont } = state.fonts;
+  const { contentLeft, contentWidth } = state.layout;
+  let titleSize = 13;
+
+  while (titleSize > 9 && boldFont.widthOfTextAtSize(title, titleSize) > contentWidth - 24) {
+    titleSize -= 0.5;
+  }
+
+  const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
+  const titleX = contentLeft + (contentWidth - titleWidth) / 2;
+
+  ensureCertificateRoom(state, 28);
+  state.page.drawText(title, {
+    x: titleX,
+    y: state.y,
+    size: titleSize,
+    font: boldFont,
+    color: COLORS.text,
+  });
+  state.page.drawLine({
+    start: { x: titleX, y: state.y - 3 },
+    end: { x: titleX + titleWidth, y: state.y - 3 },
+    thickness: 0.8,
+    color: COLORS.text,
+  });
+  state.y -= 28;
+}
+
+function drawFlowingLines(state, lines, { font, size, dotted = false, minLines = 0 }) {
+  const padded = [...lines];
+  while (padded.length < minLines) padded.push('');
+
+  padded.forEach((line) => {
+    ensureCertificateRoom(state, CERTIFICATE_LEADING);
+    if (line) {
+      state.page.drawText(line, {
+        x: state.layout.contentLeft,
+        y: state.y,
+        size,
+        font,
+        color: COLORS.text,
+      });
+    }
+    if (dotted) {
+      drawDottedRule(state.page, state.layout.contentLeft, state.y - 3, state.layout.contentWidth);
+    }
+    state.y -= CERTIFICATE_LEADING;
+  });
+}
+
+function drawSalutationRow(state, selected) {
+  const size = 12;
+  ensureCertificateRoom(state, 28);
+  let x = state.layout.contentLeft;
+
+  SALUTATIONS.forEach((option) => {
+    const width = state.fonts.regularFont.widthOfTextAtSize(option, size);
+    if (option === selected) {
+      state.page.drawEllipse({
+        x: x + width / 2,
+        y: state.y + 4,
+        xScale: width / 2 + 6,
+        yScale: 9,
+        borderColor: COLORS.text,
+        borderWidth: 1.1,
+      });
+    }
+
+    state.page.drawText(option, {
+      x,
+      y: state.y,
+      size,
+      font: state.fonts.regularFont,
+      color: COLORS.text,
+    });
+    x += width + 18;
+  });
+
+  state.y -= 26;
+}
+
+function drawCertificateSections(state, template, values) {
+  const width = state.layout.contentWidth;
+  const { regularFont, boldFont } = state.fonts;
+
+  buildCertificateSections(template, values).forEach((section) => {
+    if (section.type === 'space') {
+      ensureCertificateRoom(state, section.height);
+      state.y -= section.height;
+      return;
+    }
+
+    if (section.type === 'heading') {
+      const lines = certificateLines(section.text, width, boldFont, 12);
+      drawFlowingLines(state, lines, { font: boldFont, size: 12 });
+      state.y -= 4;
+      return;
+    }
+
+    if (section.type === 'text') {
+      const lines = certificateLines(section.text, width, regularFont, CERTIFICATE_BODY_SIZE);
+      drawFlowingLines(state, lines, { font: regularFont, size: CERTIFICATE_BODY_SIZE });
+      state.y -= 6;
+      return;
+    }
+
+    if (section.type === 'salutation') {
+      drawSalutationRow(state, values?.salutation);
+      return;
+    }
+
+    if (section.type === 'name') {
+      const lines = certificateLines(section.text, width, regularFont, CERTIFICATE_BODY_SIZE);
+      drawFlowingLines(state, lines.length ? lines : [''], {
+        font: regularFont,
+        size: CERTIFICATE_BODY_SIZE,
+        dotted: true,
+        minLines: 1,
+      });
+      state.y -= 6;
+      return;
+    }
+
+    if (section.type === 'period') {
+      const lines = certificateLines(periodLine(template, values), width, regularFont, CERTIFICATE_BODY_SIZE);
+      drawFlowingLines(state, lines, { font: regularFont, size: CERTIFICATE_BODY_SIZE });
+      state.y -= 8;
+      return;
+    }
+
+    if (section.type === 'statement') {
+      const labelLines = certificateLines(section.label, width, boldFont, 11);
+      drawFlowingLines(state, labelLines, { font: boldFont, size: 11 });
+      const textLines = certificateLines(section.text, width, regularFont, CERTIFICATE_BODY_SIZE);
+      drawFlowingLines(state, textLines, {
+        font: regularFont,
+        size: CERTIFICATE_BODY_SIZE,
+        dotted: true,
+        minLines: 2,
+      });
+      state.y -= 6;
+      return;
+    }
+
+    const labeled = `${section.label}: ${section.text}`;
+    const lines = certificateLines(labeled, width, regularFont, CERTIFICATE_BODY_SIZE);
+    drawFlowingLines(state, lines, { font: regularFont, size: CERTIFICATE_BODY_SIZE });
+    state.y -= 4;
+  });
+}
+
+function drawCertificateIssueDate(state, issueDate) {
+  const text = `Issued: ${formatCertificateDate(issueDate)}`;
+  state.page.drawText(text, {
+    x: state.layout.contentLeft,
+    y: state.issueDateY,
+    size: 11,
+    font: state.fonts.regularFont,
+    color: COLORS.text,
+  });
+}
+
+export async function generateMedicalCertificatePDF({
+  settings,
+  createdAt,
+  template,
+  values,
+} = {}) {
+  const pdfDoc = await PDFDocument.create();
+  const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const images = await loadPdfBrandingImages(pdfDoc);
+  const layout = getPdfPageLayout();
+  const fonts = { regularFont, boldFont };
+  const safeSettings = settings ?? {};
+  const state = createCertificateState(pdfDoc, layout, fonts);
+
+  addCertificatePage(state, {
+    withLetterhead: true,
+    images,
+    settings: safeSettings,
+    createdAt,
+  });
+  drawCertificateTitle(state, template);
+  drawCertificateSections(state, template, values ?? {});
+  drawCertificateIssueDate(
+    state,
+    values?.certificateDate || String(createdAt ?? '').slice(0, 10)
+  );
+  drawPdfFooter(
+    state.page,
+    { regularFont },
+    { signatureImage: images.signatureImage, sealImage: images.sealImage },
+    {
+      contentLeft: layout.contentLeft,
+      contentWidth: layout.contentWidth,
+      borderInset: layout.borderInset,
+      contentPad: layout.contentPad,
+    },
+    safeSettings
+  );
+
+  return pdfDoc.save();
+}
+
+export async function downloadIssuedCertificatePDF(record) {
+  const request = buildCertificatePdfRequest(record);
+
+  if (!request.certificateNumber || !request.template?.blocks?.length) {
+    throw new Error('This saved certificate does not include the details needed to recreate the PDF.');
+  }
+
+  return downloadMedicalCertificatePDF(request);
+}
+
+export async function downloadMedicalCertificatePDF({
+  template,
+  values,
+  settings,
+  certificateNumber,
+}) {
+  const createdAt = values?.certificateDate
+    ? new Date(`${values.certificateDate}T00:00:00.000Z`).toISOString()
+    : new Date().toISOString();
+  const pdfBytes = await generateMedicalCertificatePDF({
+    template,
+    values,
+    settings,
+    createdAt,
+  });
+  const safeName = String(values?.patientName || 'patient')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase() || 'patient';
+
+  downloadPdf(pdfBytes, `medical_certificate_${safeName}_${certificateNumber || 'draft'}.pdf`);
 }

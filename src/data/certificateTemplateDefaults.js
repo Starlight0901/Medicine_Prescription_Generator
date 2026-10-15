@@ -1,0 +1,58 @@
+export const DEFAULT_CERTIFICATE_TEMPLATES = [
+  {
+    id: 'default-medical-leave',
+    name: 'Medical Leave Certificate',
+    category: 'medical-leave',
+    blocks: [
+      { id: 'leave-heading', type: 'heading', text: 'Medical Leave Certificate' },
+      { id: 'leave-intro', type: 'text', text: 'This is to certify that' },
+      { id: 'leave-salutation', type: 'field', fieldKey: 'salutation', label: 'Salutation' },
+      { id: 'leave-name', type: 'field', fieldKey: 'patientName', label: 'Patient name' },
+      {
+        id: 'leave-statement',
+        type: 'text',
+        text: 'was examined by me and is advised medical leave for the period below.',
+      },
+      { id: 'leave-from', type: 'field', fieldKey: 'startDate', label: 'Leave from' },
+      { id: 'leave-to', type: 'field', fieldKey: 'endDate', label: 'Leave to' },
+      { id: 'leave-duration', type: 'field', fieldKey: 'duration', label: 'Duration (days)' },
+      { id: 'leave-date', type: 'field', fieldKey: 'certificateDate', label: 'Certificate date' },
+      { id: 'leave-medical', type: 'field', fieldKey: 'medicalStatement', label: 'Medical statement' },
+      { id: 'leave-doctor', type: 'field', fieldKey: 'doctorName', label: 'Doctor name' },
+    ],
+  },
+  {
+    id: 'default-medical-fitness',
+    name: 'Medical Fitness Certificate',
+    category: 'medical-fitness',
+    blocks: [
+      { id: 'fitness-heading', type: 'heading', text: 'Medical Fitness Certificate' },
+      { id: 'fitness-intro', type: 'text', text: 'This is to certify that' },
+      { id: 'fitness-salutation', type: 'field', fieldKey: 'salutation', label: 'Salutation' },
+      { id: 'fitness-name', type: 'field', fieldKey: 'patientName', label: 'Patient name' },
+      {
+        id: 'fitness-statement',
+        type: 'text',
+        text: 'was examined by me and is medically fit.',
+      },
+      { id: 'fitness-date', type: 'field', fieldKey: 'certificateDate', label: 'Certificate date' },
+      { id: 'fitness-remarks', type: 'field', fieldKey: 'medicalStatement', label: 'Remarks' },
+      { id: 'fitness-doctor', type: 'field', fieldKey: 'doctorName', label: 'Doctor name' },
+    ],
+  },
+  {
+    id: 'default-other',
+    name: 'Other Medical Certificate',
+    category: 'other',
+    blocks: [
+      { id: 'other-heading', type: 'heading', text: 'Medical Certificate' },
+      { id: 'other-intro', type: 'text', text: 'This is to certify that' },
+      { id: 'other-salutation', type: 'field', fieldKey: 'salutation', label: 'Salutation' },
+      { id: 'other-name', type: 'field', fieldKey: 'patientName', label: 'Patient name' },
+      { id: 'other-follow', type: 'text', text: 'attended for the reason recorded below.' },
+      { id: 'other-date', type: 'field', fieldKey: 'certificateDate', label: 'Certificate date' },
+      { id: 'other-medical', type: 'field', fieldKey: 'medicalStatement', label: 'Medical statement' },
+      { id: 'other-doctor', type: 'field', fieldKey: 'doctorName', label: 'Doctor name' },
+    ],
+  },
+];

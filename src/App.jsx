@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import Patients from './pages/Patients';
 import NewPrescription from './pages/NewPrescription';
 import History from './pages/History';
+import MedicalCertificates from './pages/MedicalCertificates';
+import CertificateTemplates from './pages/CertificateTemplates';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import { ROUTES } from './data/constants';
@@ -23,6 +25,8 @@ function App() {
               <Route path={ROUTES.DASHBOARD} element={<Dashboard />} />
               <Route path={ROUTES.PATIENTS} element={<Patients />} />
               <Route path={ROUTES.NEW_PRESCRIPTION} element={<NewPrescription />} />
+              <Route path={ROUTES.CERTIFICATES} element={<MedicalCertificates />} />
+              <Route path={ROUTES.CERTIFICATE_TEMPLATES} element={<CertificateTemplates />} />
               <Route path={ROUTES.HISTORY} element={<History />} />
               <Route path={ROUTES.SETTINGS} element={<Settings />} />
             </Route>

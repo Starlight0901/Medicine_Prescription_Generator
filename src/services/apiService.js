@@ -14,6 +14,19 @@ import {
   updatePrescription,
 } from './prescriptionsService';
 import { getSettings as readSettings, saveSettings } from './settingsService';
+import {
+  createCertificateTemplate,
+  deleteCertificateTemplate,
+  getAllCertificateTemplates,
+  updateCertificateTemplate,
+} from './certificateTemplatesService';
+import {
+  countMedicalCertificates as fetchMedicalCertificateCount,
+  deleteMedicalCertificate as deleteMedicalCertificateRecord,
+  getAllMedicalCertificates as fetchAllMedicalCertificates,
+  getRecentMedicalCertificates,
+  issueMedicalCertificate,
+} from './medicalCertificatesService';
 
 /**
  * Unified async data access facade for UI components.
@@ -73,4 +86,40 @@ export async function getSettings() {
 
 export async function updateSettings(settingsInput) {
   return saveSettings(settingsInput);
+}
+
+export async function getCertificateTemplates() {
+  return getAllCertificateTemplates();
+}
+
+export async function saveCertificateTemplate(template) {
+  if (template?.id) {
+    return updateCertificateTemplate(template.id, template);
+  }
+
+  return createCertificateTemplate(template);
+}
+
+export async function deleteCertificateTemplateById(id) {
+  return deleteCertificateTemplate(id);
+}
+
+export async function getMedicalCertificates(count = 5) {
+  return getRecentMedicalCertificates(count);
+}
+
+export async function getMedicalCertificateCount() {
+  return fetchMedicalCertificateCount();
+}
+
+export async function deleteMedicalCertificate(id) {
+  return deleteMedicalCertificateRecord(id);
+}
+
+export async function getAllMedicalCertificates() {
+  return fetchAllMedicalCertificates();
+}
+
+export async function issueCertificate(certificate) {
+  return issueMedicalCertificate(certificate);
 }

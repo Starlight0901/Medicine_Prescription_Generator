@@ -48,7 +48,7 @@ function Settings() {
       <header className="page-header">
         <div className="page-title-group">
           <h1>Settings</h1>
-          <p>Configure your doctor identity and prescription assets.</p>
+          <p>Configure your doctor identity, clinic contact details, and prescription assets.</p>
         </div>
       </header>
 
@@ -65,6 +65,31 @@ function Settings() {
               placeholder="Dr. Jane Smith"
             />
             {errors.doctorName && <p className="form-error">{errors.doctorName}</p>}
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="clinicAddress">Clinic address (optional)</label>
+            <textarea
+              id="clinicAddress"
+              name="clinicAddress"
+              rows={3}
+              value={formData.clinicAddress ?? ''}
+              onChange={handleChange}
+              placeholder="Street, city"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="clinicEmail">Clinic email (optional)</label>
+            <input
+              id="clinicEmail"
+              name="clinicEmail"
+              type="email"
+              value={formData.clinicEmail ?? ''}
+              onChange={handleChange}
+              placeholder="clinic@example.com"
+            />
+            {errors.clinicEmail && <p className="form-error">{errors.clinicEmail}</p>}
           </div>
 
           <div className="form-group">
@@ -105,6 +130,7 @@ function Settings() {
             )}
           </div>
 
+          {errors.form && <p className="form-error">{errors.form}</p>}
           {message && <p className="status-message" role="status">{message}</p>}
 
           <div className="form-actions">
